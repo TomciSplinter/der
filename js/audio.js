@@ -10,7 +10,10 @@ export class Sound {
     this.master = c.createGain(); this.master.gain.value = this.muted ? 0 : .9;
     const comp = c.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
     this.master.connect(comp); comp.connect(c.destination);
-    this.sfx = this.bus(.9); this.amb = this.bus(1); this.mus = this.bus(0);
+    this.sfx = this.bus(.9); this.amb = this.bus(1);
+    // music skips the effects compressor so the (already limited) song plays at full loudness
+    this.musOut = c.createGain(); this.musOut.gain.value = this.muted ? 0 : 1; this.musOut.connect(c.destination);
+    this.mus = c.createGain(); this.mus.gain.value = 0; this.mus.connect(this.musOut);
     const len = c.sampleRate * 2, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.nb = b; return true;
@@ -21,6 +24,7 @@ export class Sound {
   setMuted(m) {
     this.muted = m; try { localStorage.setItem('der-muted', m ? '1' : '0'); } catch (e) { }
     if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : .9, this.ctx.currentTime, .05);
+    if (this.ctx) this.musOut.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, .05);
   }
   get now() { return this.ctx.currentTime; }
   noise(start = 0) { const s = this.ctx.createBufferSource(); s.buffer = this.nb; s.loop = true; s.loopStart = 0; s.loopEnd = 2; s.start(this.now + start, r(0, 1.9)); return s; }
