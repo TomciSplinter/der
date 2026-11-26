@@ -89,7 +89,7 @@ export class Sound {
   loadSong(url) { this.songP = fetch(url).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null); }
   startMusic() {
     if (!this.ctx || this.musOn || !this.songP) return; this.musOn = true;
-    this.mus.gain.cancelScheduledValues(this.now); this.mus.gain.setTargetAtTime(.6, this.now, .5);
+    this.mus.gain.cancelScheduledValues(this.now); this.mus.gain.setTargetAtTime(1, this.now, .5);
     const buf = this.songBuf ? Promise.resolve(this.songBuf) : this.songP.then(ab => ab && new Promise((ok, no) => this.ctx.decodeAudioData(ab, ok, no))).catch(() => null);
     buf.then(b => {
       if (!b || !this.musOn || this.songSrc) return; this.songBuf = b;
