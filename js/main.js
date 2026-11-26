@@ -246,22 +246,33 @@ $('#galPrev').onclick = () => meme(-1); $('#galNext').onclick = () => meme(1);
 MEMES.forEach(m => { const i = new Image(); i.src = m.img; });
 
 /* ---------- input ---------- */
-let wAcc = 0, wLock = 0;
+// during the opening dance, scrolling down pushes the camera on into the chase instead of changing section
+let wAcc = 0, wLock = 0, wTail = false;
 addEventListener('wheel', e => {
-  if (state !== 'drive') return; const now = performance.now(); if (now < wLock) { wAcc = 0; return; }
-  wAcc += e.deltaY; if (Math.abs(wAcc) > 45) { setStation(station + Math.sign(wAcc)); wAcc = 0; wLock = now + 950; }
+  if (state !== 'drive') return; const now = performance.now();
+  const d = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
+  if (d > 0 && world.pushBy(Math.min(.5, d / 700))) { wAcc = 0; wLock = now + 900; wTail = true; return; }
+  // swallow the rest of that same scroll gesture so it doesn't also jump to the next section
+  if (now < wLock) { wAcc = 0; if (wTail) wLock = Math.max(wLock, now + 300); return; }
+  wTail = false;
+  wAcc += d; if (Math.abs(wAcc) > 45) { setStation(station + Math.sign(wAcc)); wAcc = 0; wLock = now + 950; }
 }, { passive: true });
-let ty = 0, tx = 0, tt = 0;
-addEventListener('touchstart', e => { const p = e.touches[0]; ty = p.clientY; tx = p.clientX; tt = performance.now(); }, { passive: true });
+let ty = 0, tx = 0, tt = 0, tIntro = false, tLast = 0;
+addEventListener('touchstart', e => { const p = e.touches[0]; ty = tLast = p.clientY; tx = p.clientX; tt = performance.now(); tIntro = state === 'drive' && world.inIntro(); }, { passive: true });
+addEventListener('touchmove', e => {
+  if (!tIntro) return; const y = e.touches[0].clientY, d = tLast - y; tLast = y;
+  if (d > 0) world.pushBy(d / (innerHeight * .45));
+}, { passive: true });
 addEventListener('touchend', e => {
   if (state !== 'drive') return; const p = e.changedTouches[0], dy = ty - p.clientY, dx = tx - p.clientX;
+  if (tIntro) { tIntro = false; return; }
   if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx) * 1.2) setStation(station + Math.sign(dy));
   else if (station === 2 && Math.abs(dx) > 50 && e.target.closest && e.target.closest('#card')) meme(dx > 0 ? 1 : -1);
 }, { passive: true });
 addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') { if (state === 'gate' && ready && document.activeElement !== enterBtn) { enterBtn.click(); return; } if (state === 'room' && document.activeElement !== tvEnter) { startAct(); return; } }
   if (state !== 'drive') return;
-  if (['ArrowDown', 'PageDown'].includes(e.key)) { e.preventDefault(); setStation(station + 1); }
+  if (['ArrowDown', 'PageDown'].includes(e.key)) { e.preventDefault(); if (!world.pushBy(.45)) setStation(station + 1); }
   if (['ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); setStation(station - 1); }
   if (station === 2 && e.key === 'ArrowRight') meme(1);
   if (station === 2 && e.key === 'ArrowLeft') meme(-1);
@@ -324,4 +335,4 @@ function frame(now) {
 }
 
 // tiny hook for automated checks
-window.DER = { get act() { return world && world.act ? world.act.t : -1; }, get world() { return world; }, get room() { return room; }, get der() { return der; }, get state() { return state; }, get t() { return tS; }, get station() { return station; }, go: i => setStation(i), shoot: () => doShoot(), meme: d => meme(d) };
+window.DER = { get act() { return world && world.act ? world.act.t : -1; }, get push() { return world && world.push ? world.push.k : -1; }, get intro() { return !!(world && world.inIntro()); }, get world() { return world; }, get room() { return room; }, get der() { return der; }, get state() { return state; }, get t() { return tS; }, get station() { return station; }, go: i => setStation(i), shoot: () => doShoot(), meme: d => meme(d) };

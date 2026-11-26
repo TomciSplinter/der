@@ -26,11 +26,13 @@ const SHOTS = {
   side: { p: [-7.8, 2.6, .4], l: [2.4, 2.1, 2.6], fov: 50 },
   ots: { fov: 46 }, copFace: { fov: 40 },
 };
-// first scene after landing, played once: Der dances, seen from the front, as the chopper flies in from far behind him
+// first scene after landing, played once: Der dances, seen from the front, as the chopper flies in from far behind him;
+// then one continuous camera move ('push') carries on into the chase. Scrolling starts or speeds up the push.
 const INTRO = [
   [0, 'cut', 'danceFront'], [0, 'der', 'dance'], [0, 'heliAt', HELI_FAR], [.1, 'heliFly', [1.0, 5.5, 14], 5.1], [.2, 'siren', 5.2],
-  [5.4, 'der', 'idle'], [5.4, 'next'],
+  [5.4, 'push'],
 ];
+const PUSH_TIME = 1.7;
 const SCRIPT = [
   [0, 'cut', 'frontWide'], [0, 'heli', [6.5, 3.4, 9.5]],
   [3.4, 'cut', 'front'], [3.9, 'dershoot'],
@@ -103,7 +105,7 @@ export class World {
     const moon = new THREE.DirectionalLight(0xb8c8ff, 1.5); moon.position.copy(this.moonDir).multiplyScalar(100); S.add(moon); S.add(moon.target);
     S.add(new THREE.HemisphereLight(0x5a6aa8, 0x1a1a2a, 1.25));
     this.heliOff = new THREE.Vector3(8.5, 5, 13); this.heliT = this.heliOff.clone(); this.heliDmg = 0; this.heliShake = 0; this.heliRoll = 0; this.heliDrop = 0; this.smokeAcc = 0;
-    this.heliMove = null; this.hk = -1;
+    this.heliMove = null; this.hk = -1; this.push = null; this.smoothCut = false;
     this.shake = 0; this.act = null; this.shot = 'frontWide'; this.shotT = 0; this.derYawT = Math.PI; this.bombs = []; this.sfx = null; this.cutGlitch = 0;
     this.buildSky(); this.buildGround(); this.buildTown(A); this.buildSleigh(A); this.buildHeli(A); this.buildParticles();
     this.boom = new Boom(S);
@@ -307,8 +309,17 @@ export class World {
   }
   later(t, f) { this.events.push({ t: this.t + t, f }); }
   startAction(intro) { this.act = { t: 0, i: 0, s: intro ? INTRO : SCRIPT }; }
-  stopAction() { this.act = null; this.heliMove = null; this.heliT.set(8.5, 5, 13); }
-  cut(name) { this.shot = name; this.shotT = 0; this.cutGlitch = .12; }
+  stopAction() { this.act = null; this.push = null; this.heliMove = null; this.heliT.set(8.5, 5, 13); }
+  cut(name) { this.shot = name; this.shotT = 0; if (this.smoothCut) this.smoothCut = false; else this.cutGlitch = .12; }
+  inIntro() { return !!(this.act && this.act.s === INTRO && this.station === 'home' && this.camK >= 1); }
+  startPush() {
+    if (this.push || !this.inIntro()) return;
+    this.push = { k: 0, kT: 0, p: this.camCur.p.clone(), l: this.camCur.l.clone(), fov: this.camCur.fov };
+    const d = this.der; if (d && !this.busy && d.name !== 'idle') d.play('idle', { fade: .7 });
+    this.heliMove = null; this.heliT.set(6.5, 3.4, 9.5);
+  }
+  // scroll input during the opening dance: returns true when it was used to push the camera on
+  pushBy(v) { if (!this.inIntro()) return false; this.startPush(); if (this.push) this.push.kT = Math.min(1, this.push.kT + v); return true; }
   runScript(dt) {
     const A = this.act; if (!A) return; A.t += dt;
     while (A.i < A.s.length && A.s[A.i][0] <= A.t) {
@@ -319,7 +330,7 @@ export class World {
       else if (k === 'heliFly') { this.heliMove = { from: this.heliOff.clone(), to: new THREE.Vector3(...a), t: 0, dur: b }; this.heliT.set(...a); }
       else if (k === 'siren') this.sfx && this.sfx.sirenIn(a);
       else if (k === 'der') { const d = this.der; if (d && !this.busy && d.name !== a) d.play(a, { fade: .5 }); }
-      else if (k === 'next') { A.s = SCRIPT; A.t = 0; A.i = 0; }
+      else if (k === 'push') this.startPush();
       else if (k === 'cop') { this.cop.play(a, { fade: .25, once: true }); this.later(2.2, () => { if (this.cop.name === a) this.cop.play('idle', { fade: .4 }); }); }
       else if (k === 'throw') this.throwBomb(a, b);
       else if (k === 'shootback') this.shootHeli();
@@ -381,7 +392,7 @@ export class World {
     const at = (t, f) => this.events.push({ t: this.t + t, f });
     for (const s of [.85, 1.3, 1.75]) at(s, () => { this.fire(); onShot && onShot(); });
     // back to dancing only if he still should be (memes, or the opening dance)
-    at(2.45, () => { const keep = was === 'dance' && (this.station === 'memes' || (this.act && this.act.s === INTRO)); d.play(keep ? 'dance' : 'idle', { fade: .45 }); });
+    at(2.45, () => { const keep = was === 'dance' && (this.station === 'memes' || (this.act && this.act.s === INTRO && !this.push)); d.play(keep ? 'dance' : 'idle', { fade: .45 }); });
     at(2.9, () => { this.busy = false; onDone && onDone(); });
     return true;
   }
@@ -441,6 +452,12 @@ export class World {
     if (this.sfx && Math.abs(hk - this.hk) > .04) { this.hk = hk; this.sfx.heliNear(hk); }
     if (this.heliDmg > .2) { this.smokeAcc += dt; if (this.smokeAcc > .05) { this.smokeAcc = 0; this.engine.getWorldPosition(_u); this.boom.puffSmoke(_u, _w.set(rand(-.5, .5), 1.6, -this.speed * .35), 2.2 + this.heliDmg * 2.6, 2.2, .06, .85); if (this.heliDmg > .55) this.boom.puffFire(_u, _w.set(0, .8, 0), 1.3, .3); } }
     this.cop.update(dt);
+    const pu = this.push;
+    if (pu) {
+      pu.kT = Math.min(1, pu.kT + dt / PUSH_TIME); pu.k = damp(pu.k, pu.kT, 6, dt);
+      // the camera has arrived where the chase's first shot starts: hand over without a cut
+      if (pu.kT >= 1 && pu.k > .996) { this.push = null; this.act.s = SCRIPT; this.act.t = 0; this.act.i = 0; this.smoothCut = true; }
+    }
     if (home) this.runScript(dt);
     this.updateBombs(dt);
     this.boom.air = spd * .9; this.boom.update(dt, this.cam);
@@ -489,7 +506,15 @@ export class World {
         this.cop.head.getWorldPosition(L); P.copy(this.heliBody.localToWorld(_u.set(-4.4, .9, -2.7))); L.y -= .2;
       } else { P.set(rp.x + sh.p[0] * (wide ? 1 : .55), rp.y + sh.p[1], rp.z + sh.p[2] * (wide ? 1 : 1.15)); L.set(rp.x + sh.l[0], rp.y + sh.l[1], rp.z + sh.l[2]); }
       P.lerp(L, Math.min(.16, this.shotT * .022));
-      c.p.copy(P).sub(rp); c.l.copy(L).sub(rp); c.fov = sh.fov; c.off = 0; c.offY = 0;
+      let fov = sh.fov;
+      const pu = this.push;
+      if (pu) {
+        // continuous move from the dance close-up to the start of the chase's first shot
+        const to = SHOTS[SCRIPT[0][2]], e = ease(pu.k);
+        _t1.set(to.p[0] * (wide ? 1 : .55), to.p[1], to.p[2] * (wide ? 1 : 1.15)); _t2.set(...to.l);
+        P.copy(pu.p).lerp(_t1, e).add(rp); L.copy(pu.l).lerp(_t2, e).add(rp); fov = lerp(pu.fov, to.fov, e);
+      }
+      c.p.copy(P).sub(rp); c.l.copy(L).sub(rp); c.fov = fov; c.off = 0; c.offY = 0;
     } else {
       if (this.camK < 1) {
         this.camK = Math.min(1, this.camK + dt / this.camDur); const k = ease(this.camK), f = this.camFrom, to = KEYS[this.camTo];
