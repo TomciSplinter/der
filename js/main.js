@@ -16,12 +16,12 @@ const CONFIG = {
   chart: '',     // e.g. 'https://dexscreener.com/…'
 };
 const MEMES = [
-  { img: 'img/m1.webp', name: 'Rooftop DER', ask: 'Checking the list. Twice.' },
-  { img: 'img/m2.webp', name: 'Sleigh DER', ask: 'Making it snow.' },
-  { img: 'img/m3.webp', name: 'Fireside DER', ask: 'Counting the presents.' },
-  { img: 'img/m4.webp', name: 'Santa hat DER', ask: 'Ho ho hold this.' },
-  { img: 'img/m5.webp', name: 'Getaway DER', ask: 'Late for the party.' },
-  { img: 'img/m6.webp', name: 'Boss DER', ask: 'Gifts are non-refundable.' },
+  { img: 'img/m1.webp', name: 'Rooftop der', ask: 'Checking the list. Twice.' },
+  { img: 'img/m2.webp', name: 'Sleigh der', ask: 'Making it snow.' },
+  { img: 'img/m3.webp', name: 'Fireside der', ask: 'Counting the presents.' },
+  { img: 'img/m4.webp', name: 'Santa hat der', ask: 'Ho ho hold this.' },
+  { img: 'img/m5.webp', name: 'Getaway der', ask: 'Late for the party.' },
+  { img: 'img/m6.webp', name: 'Boss der', ask: 'Gifts are non-refundable.' },
 ];
 const STATIONS = ['home', 'about', 'memes'];
 // 3D models: hosted copies first, then the local assets/ folder (for self-hosting)
