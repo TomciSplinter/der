@@ -210,7 +210,7 @@ function startDrive() {
   state = 'drive'; tS = 0;
   room.hideBolts(); der.root.visible = true; der.gun.visible = true; der.shotgun.visible = true; fly = null; crackEl.style.opacity = '0';
   world.attachDer(der); der.play('idle', { fade: 0, resetOff: true });
-  world.land(); glitch = .9;
+  world.onExit = homeDone; world.land(); glitch = .9;
   setTimeout(() => flash(0, 900), 60);
   document.body.classList.remove('cine'); skipBtn.classList.remove('on'); tvEnter.classList.remove('on');
   sound.stopLoop('room'); sound.startDrive(); sound.startMusic();
@@ -229,6 +229,8 @@ function setStation(i, force) {
   else { sound.setBoost(0); if (prev === 2 && der.name === 'dance') der.play('idle', { fade: .6 }); }
 }
 navBtns.forEach((b, k) => b.onclick = () => { sound.blip(); setStation(k); });
+// a scroll that was waiting for the last fight beat to play out goes on to ABOUT
+function homeDone() { if (state === 'drive' && station === 0) { setStation(1); wLock = performance.now() + 950; } }
 function doShoot() { world.shoot(() => { sound.shot(); }, () => sound.ching()); }
 
 /* ---------- memes card ---------- */
@@ -246,33 +248,38 @@ $('#galPrev').onclick = () => meme(-1); $('#galNext').onclick = () => meme(1);
 MEMES.forEach(m => { const i = new Image(); i.src = m.img; });
 
 /* ---------- input ---------- */
-// during the opening dance, scrolling down pushes the camera on into the chase instead of changing section
-let wAcc = 0, wLock = 0, wTail = false;
+// On HOME, scrolling down first moves the story on: the dance into the chase, then through the fight beats.
+// One scroll gesture (or swipe) = one step. When HOME has nothing left, scrolling changes section as before.
+let wAcc = 0, wLock = 0, wLast = 0, wUsed = false;
 addEventListener('wheel', e => {
-  if (state !== 'drive') return; const now = performance.now();
+  if (state !== 'drive') return; const now = performance.now(), ts = e.timeStamp || now;
   const d = e.deltaMode === 1 ? e.deltaY * 33 : e.deltaMode === 2 ? e.deltaY * innerHeight : e.deltaY;
-  if (d > 0 && world.pushBy(Math.min(.5, d / 700))) { wAcc = 0; wLock = now + 900; wTail = true; return; }
-  // swallow the rest of that same scroll gesture so it doesn't also jump to the next section
-  if (now < wLock) { wAcc = 0; if (wTail) wLock = Math.max(wLock, now + 300); return; }
-  wTail = false;
-  wAcc += d; if (Math.abs(wAcc) > 45) { setStation(station + Math.sign(wAcc)); wAcc = 0; wLock = now + 950; }
+  if (ts - wLast > 300) wUsed = false; wLast = ts; // a short pause starts a new gesture
+  if (d > 0) {
+    if (world.pushing()) { world.pushBy(Math.min(.5, d / 700)); wUsed = true; return; }
+    if (wUsed) return; // rest of a gesture that already did something
+    if (world.pushNext(Math.min(.5, d / 700))) { wUsed = true; wAcc = 0; return; }
+  }
+  if (now < wLock) { wAcc = 0; return; }
+  wAcc += d; if (Math.abs(wAcc) > 45) { setStation(station + Math.sign(wAcc)); wAcc = 0; wLock = now + 950; wUsed = true; }
 }, { passive: true });
-let ty = 0, tx = 0, tt = 0, tIntro = false, tLast = 0;
-addEventListener('touchstart', e => { const p = e.touches[0]; ty = tLast = p.clientY; tx = p.clientX; tt = performance.now(); tIntro = state === 'drive' && world.inIntro(); }, { passive: true });
+let ty = 0, tx = 0, tt = 0, tLast = 0, tUsed = false;
+addEventListener('touchstart', e => { const p = e.touches[0]; ty = tLast = p.clientY; tx = p.clientX; tt = performance.now(); tUsed = false; }, { passive: true });
 addEventListener('touchmove', e => {
-  if (!tIntro) return; const y = e.touches[0].clientY, d = tLast - y; tLast = y;
-  if (d > 0) world.pushBy(d / (innerHeight * .45));
+  if (state !== 'drive') return; const y = e.touches[0].clientY, d = tLast - y; tLast = y; if (d <= 0) return;
+  if (world.pushing()) { world.pushBy(d / (innerHeight * .45)); tUsed = true; }
+  else if (!tUsed && ty - y > 24 && world.pushNext(d / (innerHeight * .45))) tUsed = true;
 }, { passive: true });
 addEventListener('touchend', e => {
   if (state !== 'drive') return; const p = e.changedTouches[0], dy = ty - p.clientY, dx = tx - p.clientX;
-  if (tIntro) { tIntro = false; return; }
+  if (tUsed) return; // that swipe moved the HOME story on
   if (Math.abs(dy) > 50 && Math.abs(dy) > Math.abs(dx) * 1.2) setStation(station + Math.sign(dy));
   else if (station === 2 && Math.abs(dx) > 50 && e.target.closest && e.target.closest('#card')) meme(dx > 0 ? 1 : -1);
 }, { passive: true });
 addEventListener('keydown', e => {
   if (e.key === 'Enter' || e.key === ' ') { if (state === 'gate' && ready && document.activeElement !== enterBtn) { enterBtn.click(); return; } if (state === 'room' && document.activeElement !== tvEnter) { startAct(); return; } }
   if (state !== 'drive') return;
-  if (['ArrowDown', 'PageDown'].includes(e.key)) { e.preventDefault(); if (!world.pushBy(.45)) setStation(station + 1); }
+  if (['ArrowDown', 'PageDown'].includes(e.key)) { e.preventDefault(); if (!world.pushNext(.45)) setStation(station + 1); }
   if (['ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); setStation(station - 1); }
   if (station === 2 && e.key === 'ArrowRight') meme(1);
   if (station === 2 && e.key === 'ArrowLeft') meme(-1);
@@ -296,7 +303,7 @@ function frame(now) {
   shake = Math.max(0, shake - dt * .25); glitch = Math.max(0, glitch - dt);
   post.U.uGlitch.value = Math.max(glitch * .9, world.cutGlitch * 2.2); post.U.uGhost.value = reduce ? .08 : .22;
   if (state === 'drive') {
-    world.update(dt, true);
+    world.update(dt * world.timeScale, true);
     if (frameN % 6 === 0) cashEl.textContent = '$' + String(Math.floor(world.cash)).padStart(8, '0');
     post.render(world.scene, world.cam, T);
     return;
@@ -335,4 +342,4 @@ function frame(now) {
 }
 
 // tiny hook for automated checks
-window.DER = { get act() { return world && world.act ? world.act.t : -1; }, get push() { return world && world.push ? world.push.k : -1; }, get intro() { return !!(world && world.inIntro()); }, get world() { return world; }, get room() { return room; }, get der() { return der; }, get state() { return state; }, get t() { return tS; }, get station() { return station; }, go: i => setStation(i), shoot: () => doShoot(), meme: d => meme(d) };
+window.DER = { get act() { return world && world.act ? world.act.t : -1; }, get push() { return world && world.push ? world.push.k : -1; }, get intro() { return !!(world && world.inIntro()); }, get pushTo() { return world && world.push ? world.push.stop.at : -1; }, get queued() { return !!(world && world.queued); }, get seen() { return !!(world && world.fightSeen); }, get world() { return world; }, get room() { return room; }, get der() { return der; }, get state() { return state; }, get t() { return tS; }, get station() { return station; }, go: i => setStation(i), shoot: () => doShoot(), meme: d => meme(d) };

@@ -27,12 +27,21 @@ const SHOTS = {
   ots: { fov: 46 }, copFace: { fov: 40 },
 };
 // first scene after landing, played once: Der dances, seen from the front, as the chopper flies in from far behind him;
-// then one continuous camera move ('push') carries on into the chase. Scrolling starts or speeds up the push.
+// then one continuous camera move ('push') carries on into the chase.
 const INTRO = [
   [0, 'cut', 'danceFront'], [0, 'der', 'dance'], [0, 'heliAt', HELI_FAR], [.1, 'heliFly', [1.0, 5.5, 14], 5.1], [.2, 'siren', 5.2],
   [5.4, 'push'],
 ];
-const PUSH_TIME = 1.7;
+// Scrolling down on HOME moves the story on instead of leaving it: from the dance into the chase, then through these
+// fight beats. cut: script time of the beat's first shot; at: where a scroll lands (just before the action);
+// leave: until then a scroll fast-forwards the beat instead of skipping it, so the action is always seen.
+const STOP0 = { cut: 0, at: 0, shot: 'frontWide', leave: 0 };
+const STOPS = [
+  { cut: 5.2, at: 6.0, shot: 'side', leave: 8.5 }, // the cop throws the first coal bomb, Der dodges, it goes off
+  { cut: 8.7, at: 8.7, shot: 'ots', leave: 10.5 }, // Der shoots back over his shoulder
+  { cut: 13.8, at: 13.8, shot: 'copFace', leave: 17.2 }, // the cop taunts, the second bomb blows up next to Der
+];
+const _pP = new THREE.Vector3(), _pL = new THREE.Vector3();
 const SCRIPT = [
   [0, 'cut', 'frontWide'], [0, 'heli', [6.5, 3.4, 9.5]],
   [3.4, 'cut', 'front'], [3.9, 'dershoot'],
@@ -105,7 +114,7 @@ export class World {
     const moon = new THREE.DirectionalLight(0xb8c8ff, 1.5); moon.position.copy(this.moonDir).multiplyScalar(100); S.add(moon); S.add(moon.target);
     S.add(new THREE.HemisphereLight(0x5a6aa8, 0x1a1a2a, 1.25));
     this.heliOff = new THREE.Vector3(8.5, 5, 13); this.heliT = this.heliOff.clone(); this.heliDmg = 0; this.heliShake = 0; this.heliRoll = 0; this.heliDrop = 0; this.smokeAcc = 0;
-    this.heliMove = null; this.hk = -1; this.push = null; this.smoothCut = false;
+    this.heliMove = null; this.hk = -1; this.push = null; this.smoothCut = false; this.fightSeen = false; this.queued = false; this.timeScale = 1; this.onExit = null;
     this.shake = 0; this.act = null; this.shot = 'frontWide'; this.shotT = 0; this.derYawT = Math.PI; this.bombs = []; this.sfx = null; this.cutGlitch = 0;
     this.buildSky(); this.buildGround(); this.buildTown(A); this.buildSleigh(A); this.buildHeli(A); this.buildParticles();
     this.boom = new Boom(S);
@@ -309,17 +318,34 @@ export class World {
   }
   later(t, f) { this.events.push({ t: this.t + t, f }); }
   startAction(intro) { this.act = { t: 0, i: 0, s: intro ? INTRO : SCRIPT }; }
-  stopAction() { this.act = null; this.push = null; this.heliMove = null; this.heliT.set(8.5, 5, 13); }
+  stopAction() { this.act = null; this.push = null; this.queued = false; this.timeScale = 1; this.heliMove = null; this.heliT.set(8.5, 5, 13); }
   cut(name) { this.shot = name; this.shotT = 0; if (this.smoothCut) this.smoothCut = false; else this.cutGlitch = .12; }
-  inIntro() { return !!(this.act && this.act.s === INTRO && this.station === 'home' && this.camK >= 1); }
-  startPush() {
-    if (this.push || !this.inIntro()) return;
-    this.push = { k: 0, kT: 0, p: this.camCur.p.clone(), l: this.camCur.l.clone(), fov: this.camCur.fov };
-    const d = this.der; if (d && !this.busy && d.name !== 'idle') d.play('idle', { fade: .7 });
-    this.heliMove = null; this.heliT.set(6.5, 3.4, 9.5);
+  // continuous camera move from wherever the camera is to where a stop's shot starts; the script carries on from there
+  startPushTo(stop, dur) {
+    const A = this.act; if (!A || this.push) return false;
+    this.queued = false; this.timeScale = 1;
+    this.push = { k: 0, kT: 0, dur, stop, shot: stop.shot, p: this.camCur.p.clone(), l: this.camCur.l.clone(), fov: this.camCur.fov };
+    // the chopper heads for where it is in that shot
+    let hp = null; for (const e of SCRIPT) { if (e[0] > stop.at) break; if (e[1] === 'heli') hp = e[2]; }
+    if (hp) { this.heliMove = null; this.heliT.set(...hp); }
+    const d = this.der; if (d && !this.busy && d.name === 'dance') d.play('idle', { fade: .7 });
+    return true;
   }
-  // scroll input during the opening dance: returns true when it was used to push the camera on
-  pushBy(v) { if (!this.inIntro()) return false; this.startPush(); if (this.push) this.push.kT = Math.min(1, this.push.kT + v); return true; }
+  pushing() { return !!this.push; }
+  inIntro() { return !!(this.act && this.act.s === INTRO); }
+  pushBy(v) { if (this.push) this.push.kT = Math.min(1, this.push.kT + v); }
+  // A scroll-down on HOME. Returns false when HOME has nothing left, so the page goes on to the next section.
+  pushNext(v) {
+    if (this.push) { this.pushBy(v); return true; }
+    if (this.queued) return true;
+    const A = this.act; if (!A || this.station !== 'home' || this.camK < 1) return false;
+    if (A.s === INTRO) { if (!this.startPushTo(STOP0, 1.7)) return false; this.pushBy(v); return true; }
+    if (this.fightSeen) return false;
+    // in the middle of a beat: play it out fast, then move on
+    if (STOPS.some(s => A.t >= s.cut && A.t < s.leave)) { this.queued = true; this.timeScale = 2.4; return true; }
+    const next = STOPS.find(s => s.cut > A.t + .1); if (!next || !this.startPushTo(next, 1.3)) return false;
+    this.pushBy(v); return true;
+  }
   runScript(dt) {
     const A = this.act; if (!A) return; A.t += dt;
     while (A.i < A.s.length && A.s[A.i][0] <= A.t) {
@@ -330,13 +356,14 @@ export class World {
       else if (k === 'heliFly') { this.heliMove = { from: this.heliOff.clone(), to: new THREE.Vector3(...a), t: 0, dur: b }; this.heliT.set(...a); }
       else if (k === 'siren') this.sfx && this.sfx.sirenIn(a);
       else if (k === 'der') { const d = this.der; if (d && !this.busy && d.name !== a) d.play(a, { fade: .5 }); }
-      else if (k === 'push') this.startPush();
+      else if (k === 'push') this.startPushTo(STOP0, 1.7);
       else if (k === 'cop') { this.cop.play(a, { fade: .25, once: true }); this.later(2.2, () => { if (this.cop.name === a) this.cop.play('idle', { fade: .4 }); }); }
       else if (k === 'throw') this.throwBomb(a, b);
       else if (k === 'shootback') this.shootHeli();
       else if (k === 'dershoot') this.shoot(() => this.sfx && this.sfx.shot(), () => this.sfx && this.sfx.ching());
-      else if (k === 'loop') { A.t = 0; A.i = 0; }
+      else if (k === 'loop') { A.t = 0; A.i = 0; this.fightSeen = true; }
     }
+    if (A.s === SCRIPT && A.t >= STOPS[STOPS.length - 1].leave) this.fightSeen = true;
   }
   throwBomb(target, react) {
     const cop = this.cop; cop.play('throw', { from: 1.8, speed: 1.2, once: true, fade: .2 });
@@ -454,11 +481,21 @@ export class World {
     this.cop.update(dt);
     const pu = this.push;
     if (pu) {
-      pu.kT = Math.min(1, pu.kT + dt / PUSH_TIME); pu.k = damp(pu.k, pu.kT, 6, dt);
-      // the camera has arrived where the chase's first shot starts: hand over without a cut
-      if (pu.kT >= 1 && pu.k > .996) { this.push = null; this.act.s = SCRIPT; this.act.t = 0; this.act.i = 0; this.smoothCut = true; }
+      pu.kT = Math.min(1, pu.kT + dt / pu.dur); pu.k = damp(pu.k, pu.kT, 6, dt);
+      // the camera has arrived where the next shot starts: hand over without a cut
+      if (pu.kT >= 1 && pu.k > .996) {
+        this.push = null; const A = this.act, st = pu.stop; A.s = SCRIPT; A.t = st.at;
+        A.i = SCRIPT.findIndex(e => e[0] >= st.at); if (A.i < 0) A.i = SCRIPT.length;
+        if (SCRIPT[A.i] && SCRIPT[A.i][0] === st.at && SCRIPT[A.i][1] === 'cut') A.i++;
+        this.smoothCut = true; this.cut(pu.shot);
+      }
+    } else if (this.queued) {
+      // fast-forwarding a beat after a scroll: once its action is done, move on to the next one (or leave HOME)
+      const A = this.act;
+      if (!A || A.s !== SCRIPT || this.station !== 'home') { this.queued = false; this.timeScale = 1; }
+      else if (!STOPS.some(s => A.t >= s.cut && A.t < s.leave)) { this.queued = false; this.timeScale = 1; if (!this.pushNext(.1) && this.onExit) this.onExit(); }
     }
-    if (home) this.runScript(dt);
+    if (home && !this.push) this.runScript(dt);
     this.updateBombs(dt);
     this.boom.air = spd * .9; this.boom.update(dt, this.cam);
     this.shake = Math.max(0, this.shake - dt * .9); this.cutGlitch = Math.max(0, this.cutGlitch - dt);
@@ -494,25 +531,28 @@ export class World {
     if (renderMain) this.updateCam(dt);
     const fc = this.feedCam; fc.position.set(this.rig.position.x + 22 + Math.sin(t * .2) * 6, this.rig.position.y + 17, 8 + Math.cos(t * .2) * 8); fc.lookAt(this.rig.position.x, this.rig.position.y, -6);
   }
+  // where a shot's camera sits at its first frame
+  shotPose(name, P, L, wide) {
+    const rp = this.rig.position, sh = SHOTS[name];
+    if (name === 'ots') {
+      this.der.head.getWorldPosition(L); const hp = this.heli.position; const d = _u.copy(hp).sub(L).normalize(); const side = _t1.crossVectors(d, UP).normalize();
+      P.copy(L).addScaledVector(d, -1.9).addScaledVector(side, .7).add(_t2.set(0, .4, 0)); L.lerp(hp, .85);
+    } else if (name === 'copFace') {
+      this.cop.head.getWorldPosition(L); P.copy(this.heliBody.localToWorld(_u.set(-4.4, .9, -2.7))); L.y -= .2;
+    } else { P.set(rp.x + sh.p[0] * (wide ? 1 : .55), rp.y + sh.p[1], rp.z + sh.p[2] * (wide ? 1 : 1.15)); L.set(rp.x + sh.l[0], rp.y + sh.l[1], rp.z + sh.l[2]); }
+  }
   updateCam(dt) {
     const t = this.t, cam = this.cam, rp = this.rig.position, c = this.camCur, wide = cam.aspect > 1.05, px = wide ? 1 : .35;
     const P = _cp, L = _cl;
     if (this.act && this.station === 'home' && this.camK >= 1 && this.der) {
-      this.shotT += dt; const sh = SHOTS[this.shot];
-      if (this.shot === 'ots') {
-        this.der.head.getWorldPosition(L); const hp = this.heli.position; const d = _u.copy(hp).sub(L).normalize(); const side = _t1.crossVectors(d, UP).normalize();
-        P.copy(L).addScaledVector(d, -1.9).addScaledVector(side, .7).add(_t2.set(0, .4, 0)); L.lerp(hp, .85);
-      } else if (this.shot === 'copFace') {
-        this.cop.head.getWorldPosition(L); P.copy(this.heliBody.localToWorld(_u.set(-4.4, .9, -2.7))); L.y -= .2;
-      } else { P.set(rp.x + sh.p[0] * (wide ? 1 : .55), rp.y + sh.p[1], rp.z + sh.p[2] * (wide ? 1 : 1.15)); L.set(rp.x + sh.l[0], rp.y + sh.l[1], rp.z + sh.l[2]); }
+      this.shotT += dt; this.shotPose(this.shot, P, L, wide);
       P.lerp(L, Math.min(.16, this.shotT * .022));
-      let fov = sh.fov;
+      let fov = SHOTS[this.shot].fov;
       const pu = this.push;
       if (pu) {
-        // continuous move from the dance close-up to the start of the chase's first shot
-        const to = SHOTS[SCRIPT[0][2]], e = ease(pu.k);
-        _t1.set(to.p[0] * (wide ? 1 : .55), to.p[1], to.p[2] * (wide ? 1 : 1.15)); _t2.set(...to.l);
-        P.copy(pu.p).lerp(_t1, e).add(rp); L.copy(pu.l).lerp(_t2, e).add(rp); fov = lerp(pu.fov, to.fov, e);
+        // continuous move to where the next shot starts (that shot may be following the moving chopper)
+        const e = ease(pu.k); this.shotPose(pu.shot, _pP, _pL, wide); _pP.sub(rp); _pL.sub(rp);
+        orbit(P, pu.p, _pP, e).add(rp); L.copy(pu.l).lerp(_pL, e).add(rp); fov = lerp(pu.fov, SHOTS[pu.shot].fov, e);
       }
       c.p.copy(P).sub(rp); c.l.copy(L).sub(rp); c.fov = fov; c.off = 0; c.offY = 0;
     } else {
