@@ -62,7 +62,7 @@ sizeGlass();
 const STAR = '<svg class="st" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 0l1.5 3.2 3.5.5-2.5 2.4.6 3.5L5 8 1.9 9.6l.6-3.5L0 3.7l3.5-.5z"/></svg>';
 document.querySelectorAll('.stars').forEach(e => e.innerHTML = STAR.repeat(5));
 const links = $('#links');
-for (const [label, key] of [['X', 'x'], ['TG', 'telegram'], ['Chart', 'chart']]) {
+for (const [label, key] of [['X', 'x']]) {
   const url = CONFIG[key]; const el = document.createElement(url ? 'a' : 'span'); el.className = 'psx lk';
   const l = document.createElement('span'); l.className = 'lbl'; l.textContent = label; el.appendChild(l);
   if (url) { el.href = url; el.target = '_blank'; el.rel = 'noopener'; el.setAttribute('aria-label', label); }
@@ -76,7 +76,11 @@ if (CONFIG.ca) {
   ca.append(code, b);
 }
 function syncSnd() { sndBtn.setAttribute('aria-pressed', String(!sound.muted)); sndBtn.setAttribute('aria-label', sound.muted ? 'Sound off' : 'Sound on'); }
-syncSnd(); sndBtn.onclick = () => { sound.init(); sound.setMuted(!sound.muted); sound.resume(); syncSnd(); };
+syncSnd(); sndBtn.onclick = () => {
+  // the tap that first switches sound on shouldn't also mute it
+  if (performance.now() - unlockedAt < 800 && !sound.muted) return;
+  sound.init(); sound.setMuted(!sound.muted); sound.resume(); syncSnd();
+};
 
 /* ---------- three ---------- */
 let renderer, post, room, world, der, feedRT, tableGun;
@@ -119,8 +123,9 @@ async function load() {
   renderer.setRenderTarget(feedRT); renderer.render(world.scene, world.feedCam);
   post.render(room.scene, room.cam, 0); post.render(world.scene, world.cam, 0);
   setProgress(1);
-  ready = true; enterBtn.disabled = false; enterBtn.classList.add('ready'); enterBtn.setAttribute('aria-label', 'Enter'); gword.textContent = 'ENTER'; prog.textContent = 'Ready. Press Enter.';
+  ready = true; prog.textContent = 'Ready';
   requestAnimationFrame(frame);
+  begin(); // no enter page: go straight to the TV
 }
 let ready = false;
 if (renderer) load().catch(fail);
@@ -158,13 +163,23 @@ let state = 'gate', T = 0, tS = 0, last = 0, frameN = 0, station = 0, shake = 0,
 const ACT = [];
 function at(t, f) { ACT.push({ t, f, done: false }); }
 
-enterBtn.onclick = () => {
+function begin() {
   if (!ready || state !== 'gate') return;
-  sound.init(); sound.setMuted(sound.muted); sound.resume(); sound.tvOn(); sound.startRoom();
+  if (sound.ctx) { sound.tvOn(); sound.startRoom(); }
   gate.classList.add('off'); gateOn = false; setTimeout(() => gate.style.display = 'none', 700);
   document.body.classList.add('cine'); skipBtn.classList.add('on');
   state = 'tube'; tS = 0; last = performance.now();
-};
+}
+// browsers only allow sound after a tap, click or key press: the first one anywhere switches it on
+let unlockedAt = -1e9;
+function unlockAudio() {
+  if (sound.ctx) { if (sound.ctx.state !== 'running') sound.resume(); return; }
+  if (!sound.init()) return; unlockedAt = performance.now(); sound.setMuted(sound.muted); sound.resume();
+  if (state === 'tube' || state === 'room' || state === 'act') sound.startRoom();
+  else if (state === 'drive') { sound.startDrive(); sound.startMusic(); }
+}
+['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'].forEach(ev => addEventListener(ev, unlockAudio, { capture: true, passive: true }));
+sound.loadSong('audio/song.mp3');
 tvEnter.onclick = () => { if (state === 'room') startAct(); };
 skipBtn.onclick = () => { if (state === 'tube' || state === 'room') { flash(1, 80); setTimeout(() => startDrive(), 120); } };
 
@@ -277,7 +292,7 @@ addEventListener('touchend', e => {
   else if (station === 2 && Math.abs(dx) > 50 && e.target.closest && e.target.closest('#card')) meme(dx > 0 ? 1 : -1);
 }, { passive: true });
 addEventListener('keydown', e => {
-  if (e.key === 'Enter' || e.key === ' ') { if (state === 'gate' && ready && document.activeElement !== enterBtn) { enterBtn.click(); return; } if (state === 'room' && document.activeElement !== tvEnter) { startAct(); return; } }
+  if (e.key === 'Enter' || e.key === ' ') { if (state === 'room' && document.activeElement !== tvEnter) { startAct(); return; } }
   if (state !== 'drive') return;
   if (['ArrowDown', 'PageDown'].includes(e.key)) { e.preventDefault(); if (!world.pushNext(.45)) setStation(station + 1); }
   if (['ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); setStation(station - 1); }

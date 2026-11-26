@@ -11,10 +11,10 @@ Static site (no build step). Built with three.js loaded from a CDN.
 Open `js/main.js` and fill in `CONFIG` at the top:
 
 ```js
-const CONFIG = { ca: '', x: '', telegram: '', chart: '' };
+const CONFIG = { ca: '', x: '' };
 ```
 
-Empty values show "coming soon".
+Empty values show "coming soon". The music is `audio/song.mp3`.
 
 ## Files
 - `index.html` — page, styles

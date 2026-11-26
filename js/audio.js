@@ -1,18 +1,5 @@
-// All sound is synthesized live with WebAudio: no audio files.
-// Music: a chiptune take on "Jingle Bells" (J. L. Pierpont, 1857, public domain).
+// Sound effects are synthesized live with WebAudio; the music is audio/song.mp3.
 const r = (a, b) => a + Math.random() * (b - a);
-const NOTE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
-const hz = n => { const m = 12 * (+n.slice(-1) + 1) + NOTE[n[0]] + (n[1] === '#' ? 1 : 0); return 440 * Math.pow(2, (m - 69) / 12); };
-
-// melody in eighth notes: [note, length]
-const A1 = [['B4', 2], ['B4', 2], ['B4', 4], ['B4', 2], ['B4', 2], ['B4', 4], ['B4', 2], ['D5', 2], ['G4', 3], ['A4', 1], ['B4', 8]];
-const B1 = [['C5', 2], ['C5', 2], ['C5', 3], ['C5', 1], ['C5', 2], ['B4', 2], ['B4', 2], ['B4', 1], ['B4', 1], ['B4', 2], ['A4', 2], ['A4', 2], ['B4', 2], ['A4', 4], ['D5', 4]];
-const B2 = [['C5', 2], ['C5', 2], ['C5', 3], ['C5', 1], ['C5', 2], ['B4', 2], ['B4', 2], ['B4', 1], ['B4', 1], ['D5', 2], ['D5', 2], ['C5', 2], ['A4', 2], ['G4', 8]];
-const MEL = [...A1, ...B1, ...A1, ...B2];
-const CH = ['G', 'G', 'G', 'G', 'C', 'G', 'A', 'D', 'G', 'G', 'G', 'G', 'C', 'G', 'D', 'G'];
-const CHORD = { G: ['G3', 'B3', 'D4'], C: ['C4', 'E4', 'G4'], D: ['D4', 'F#4', 'A4'], A: ['C#4', 'E4', 'A4'] };
-const ROOT = { G: ['G2', 'D3'], C: ['C3', 'G2'], D: ['D3', 'A2'], A: ['A2', 'E3'] };
-const STEPS = 128, EIGHTH = 60 / 152 / 2;
 
 export class Sound {
   constructor() { this.ctx = null; this.muted = false; try { this.muted = localStorage.getItem('der-muted') === '1'; } catch (e) { } this.loops = {}; }
@@ -98,25 +85,18 @@ export class Sound {
     o.type = 'sine'; const curve = new Float32Array([620, 900, 1240, 900, 620, 900, 1240, 900, 620]); o.frequency.setValueCurveAtTime(curve, t, 2.6);
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(.035, t + .3); g.gain.linearRampToValueAtTime(0, t + 2.6); o.connect(bp); bp.connect(g); g.connect(this.amb); o.start(t); o.stop(t + 2.7);
   }
-  /* ---------- music ---------- */
+  /* ---------- music: the project's song, looped ---------- */
+  loadSong(url) { this.songP = fetch(url).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null); }
   startMusic() {
-    if (!this.ctx || this.musOn) return; this.musOn = true;
-    const ev = []; let s = 0; for (const [n, l] of MEL) { ev[s] = [n, l]; s += l; } this.ev = ev;
-    this.step = 0; this.nextT = this.now + .15; this.mus.gain.setTargetAtTime(.5, this.now, .6);
-    const tick = () => { if (!this.musOn) return; while (this.nextT < this.now + .3) { this.playStep(this.step, this.nextT); this.nextT += EIGHTH; this.step = (this.step + 1) % STEPS; } this.musT = setTimeout(tick, 70); };
-    tick();
+    if (!this.ctx || this.musOn || !this.songP) return; this.musOn = true;
+    this.mus.gain.cancelScheduledValues(this.now); this.mus.gain.setTargetAtTime(.6, this.now, .5);
+    const buf = this.songBuf ? Promise.resolve(this.songBuf) : this.songP.then(ab => ab && new Promise((ok, no) => this.ctx.decodeAudioData(ab, ok, no))).catch(() => null);
+    buf.then(b => {
+      if (!b || !this.musOn || this.songSrc) return; this.songBuf = b;
+      const s = this.ctx.createBufferSource(); s.buffer = b; s.loop = true; s.connect(this.mus); s.start(); this.songSrc = s;
+    });
   }
-  playStep(s, t) {
-    const out = this.mus, bar = s >> 3, i = s & 7, ch = CH[bar];
-    const e = this.ev[s]; if (e) { const f = hz(e[0]); this.tone('square', f, t, e[1] * EIGHTH * .92, .07, out); this.tone('square', f * 2, t, Math.min(.12, e[1] * EIGHTH * .5), .015, out); }
-    if (i % 2 === 0) this.tone('triangle', hz(ROOT[ch][(i >> 1) % 2]), t, EIGHTH * 1.7, .2, out);
-    if (i % 2 === 1) CHORD[ch].forEach(n => this.tone('square', hz(n), t, EIGHTH * .55, .018, out));
-    if (i === 0 || i === 4) this.tone('sine', 150, t, .16, .4, out, 42);
-    if (i === 2 || i === 6) this.burst(t, .11, .14, 'bandpass', 1900, out, .7);
-    for (const p of [2637, 3520, 4699]) this.tone('sine', p * r(.97, 1.03), t + r(0, .012), .07, i % 2 ? .006 : .012, out);
-    this.burst(t, .05, i % 2 ? .03 : .06, 'highpass', 7000, out);
-  }
-  stopMusic() { this.musOn = false; clearTimeout(this.musT); if (this.ctx) this.mus.gain.setTargetAtTime(0, this.now, .3); }
+  stopMusic() { this.musOn = false; if (this.ctx) this.mus.gain.setTargetAtTime(0, this.now, .3); const s = this.songSrc; this.songSrc = null; if (s) setTimeout(() => { try { s.stop(); } catch (e) { } }, 1200); }
   /* ---------- effects ---------- */
   shot() { if (!this.ctx) return; const t = this.now; this.burst(t, .32, .9, 'lowpass', 2600, this.sfx, .7, 400); this.burst(t, .04, .6, 'highpass', 3000, this.sfx); this.tone('sine', 120, t, .22, .7, this.sfx, 38); }
   zap(dur = 1.4) {
