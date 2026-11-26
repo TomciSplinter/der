@@ -73,9 +73,24 @@ export class Sound {
     const j = this.noise(); const jl = this.filt('lowpass', 210, .9); this.jetG = this.gain(.13); j.connect(jl); jl.connect(this.jetG); this.jetG.connect(g);
     const saw = c.createOscillator(); saw.type = 'sawtooth'; saw.frequency.value = 46; const sl = this.filt('lowpass', 140); const sg = this.gain(.05); saw.connect(sl); sl.connect(sg); sg.connect(g); saw.start(); this.jetOsc = saw;
     const hN = this.noise(); const hb = this.filt('bandpass', 150, 1.2); const hg = this.gain(.05); const am = c.createOscillator(); am.type = 'square'; am.frequency.value = 11.5; const amg = this.gain(.05);
-    am.connect(amg); amg.connect(hg.gain); hN.connect(hb); hb.connect(hg); hg.connect(g); am.start();
+    am.connect(amg); amg.connect(hg.gain); hN.connect(hb); hb.connect(hg); hg.connect(g); am.start(); this.rotorG = hg; this.rotorAM = amg;
     const iv = setInterval(() => { if (Math.random() < .08) this.siren(); }, 2500);
     this.loops.drive = { g, nodes: [w, lfo, j, saw, hN, am], iv };
+  }
+  // chopper rotor loudness, k = 0 far … 1 right behind the sleigh
+  heliNear(k) {
+    if (!this.rotorG) return; const t = this.now;
+    this.rotorG.gain.setTargetAtTime(.03 + k * .09, t, .25); this.rotorAM.gain.setTargetAtTime(.03 + k * .09, t, .25);
+  }
+  // police siren coming in from far away: quiet at first, loud on arrival, then fades
+  sirenIn(dur = 5) {
+    if (!this.ctx) return; const c = this.ctx, t = this.now, T = dur + 2, o = c.createOscillator(), o2 = c.createOscillator(), g = this.gain(0), bp = this.filt('bandpass', 1000, 1.2);
+    const n = Math.max(3, Math.round(T / .6)) | 1, f = new Float32Array(n), f2 = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const d = 1 + .045 * Math.min(1, i / n * T / dur); f[i] = (i % 2 ? 1280 : 660) * d; f2[i] = f[i] * .5; }
+    o.type = 'sine'; o.frequency.setValueCurveAtTime(f, t, T); o2.type = 'square'; o2.frequency.setValueCurveAtTime(f2, t, T);
+    const og = this.gain(.25); o2.connect(og); og.connect(bp); o.connect(bp); bp.connect(g); g.connect(this.amb);
+    g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.06, t + dur); g.gain.setValueAtTime(.06, t + dur + .3); g.gain.linearRampToValueAtTime(0, t + T);
+    o.start(t); o2.start(t); o.stop(t + T + .05); o2.stop(t + T + .05);
   }
   setBoost(b) { if (this.jetG) { this.jetG.gain.setTargetAtTime(.13 + b * .3, this.now, .2); this.jetOsc.frequency.setTargetAtTime(46 + b * 40, this.now, .3); } }
   siren() {

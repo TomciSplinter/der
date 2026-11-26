@@ -12,31 +12,46 @@ const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Eule
 const KEYS = {
   home: { p: [2.0, 2.3, -5.3], l: [.9, 2.0, 3.0], fov: 52, off: 0, offY: 0 },
   about: { p: [-2.25, 1.7, -2.85], l: [0, 1.32, .3], fov: 40, off: .2, offY: -.22 },
-  memes: { p: [3.4, 2.1, 5.6], l: [0, 1.6, -2.2], fov: 50, off: .2, offY: -.25 },
+  // Der turns round to face this camera: aurora and moon behind him, clouds below
+  memes: { p: [1.05, 1.85, 3.25], l: [0, 1.38, -.6], fov: 46, off: .2, offY: -.36 },
   land: { p: [-13, 8, 25], l: [0, 1.2, -6], fov: 60, off: 0, offY: 0 },
 };
+const HELI_FAR = [8, 14, 110];
 
-// HOME is a scripted chase: camera cuts, the cop's coal bombs, Der firing back
+// HOME is a scripted chase: Der dancing while the chopper closes in, then the fight
 const SHOTS = {
+  danceFront: { p: [.35, 1.35, -3.3], l: [.05, 1.75, 4.0], fov: 46 },
   frontWide: { p: [2.0, 2.3, -5.3], l: [.9, 2.0, 3.0], fov: 52 },
   front: { p: [.72, 1.72, -2.25], l: [0, 1.5, .3], fov: 42 },
   side: { p: [-7.8, 2.6, .4], l: [2.4, 2.1, 2.6], fov: 50 },
   ots: { fov: 46 }, copFace: { fov: 40 },
 };
 const SCRIPT = [
-  [0, 'cut', 'frontWide'], [0, 'heli', [6.5, 3.4, 9.5]],
-  [3.4, 'cut', 'front'], [3.9, 'dershoot'],
-  [5.2, 'cut', 'side'], [5.2, 'heli', [5.3, 2.3, 3.0]], [5.3, 'cop', 'taunt'],
-  [6.7, 'throw', [-2.8, .9, -2.2], 'dodge'],
-  [8.7, 'cut', 'ots'], [8.7, 'shootback'],
-  [11.6, 'cut', 'frontWide'], [11.6, 'heli', [8.5, 5.2, 13.5]],
-  [13.8, 'cut', 'copFace'], [13.8, 'heli', [6.0, 2.9, 6.4]], [13.9, 'cop', 'taunt'],
-  [15.2, 'throw', [1.9, .2, 2.7], 'react'],
-  [15.9, 'cut', 'front'],
-  [19.6, 'cut', 'side'], [19.6, 'heli', [7.2, 3.8, 10]],
-  [23, 'loop'],
+  // 1. Der dances, seen from the front; the chopper closes in from far behind him
+  [0, 'cut', 'danceFront'], [0, 'der', 'dance'], [0, 'heliAt', HELI_FAR], [.1, 'heliFly', [1.0, 5.5, 14], 5.1, 'io'], [.2, 'siren', 5.2],
+  // 2. the cop leans out of the door and taunts
+  [5.5, 'cut', 'copFace'], [5.5, 'heli', [6.0, 2.9, 6.4]], [5.6, 'cop', 'taunt'], [5.8, 'der', 'idle'],
+  // 3. coal bomb, Der dodges
+  [7.0, 'cut', 'side'], [7.0, 'heli', [5.3, 2.3, 3.0]], [7.4, 'throw', [-2.8, .9, -2.2], 'dodge'],
+  // 4. Der shoots back over his shoulder
+  [9.4, 'cut', 'ots'], [9.4, 'shootback'],
+  // 5. wide: the chopper is smoking and backs off
+  [12.3, 'cut', 'frontWide'], [12.3, 'heli', [8.5, 5.2, 13.5]],
+  // 6. the cop again, the second bomb lands close
+  [14.5, 'cut', 'copFace'], [14.5, 'heli', [6.0, 2.9, 6.4]], [14.6, 'cop', 'taunt'], [15.9, 'throw', [1.9, .2, 2.7], 'react'],
+  // 7. Der fires into the air, money everywhere
+  [16.6, 'cut', 'front'], [17.1, 'dershoot'],
+  // 8. the chopper drops far back, then the dance starts again
+  [20.3, 'cut', 'side'], [20.3, 'heliFly', HELI_FAR, 3.4, 'in'],
+  [23.6, 'loop'],
 ];
 function angTo(a, b, k) { let d = ((b - a + Math.PI) % (Math.PI * 2) + Math.PI * 2) % (Math.PI * 2) - Math.PI; return a + d * k; }
+// camera moves between sections orbit round Der instead of cutting straight through him
+function orbit(out, a, b, k) {
+  const aa = Math.atan2(a.z, a.x), ab = Math.atan2(b.z, b.x), ang = angTo(aa, ab, k), span = Math.abs(angTo(aa, ab, 1) - aa);
+  const r = lerp(Math.hypot(a.x, a.z), Math.hypot(b.x, b.z), k) + Math.sin(Math.PI * k) * Math.min(1.6, span * .7);
+  return out.set(Math.cos(ang) * r, lerp(a.y, b.y, k) + Math.sin(Math.PI * k) * span * .25, Math.sin(ang) * r);
+}
 
 function emissiveFromMap(map) {
   const img = map.image; const w = Math.min(512, img.width), h = Math.min(512, img.height);
@@ -89,6 +104,7 @@ export class World {
     const moon = new THREE.DirectionalLight(0xb8c8ff, 1.5); moon.position.copy(this.moonDir).multiplyScalar(100); S.add(moon); S.add(moon.target);
     S.add(new THREE.HemisphereLight(0x5a6aa8, 0x1a1a2a, 1.25));
     this.heliOff = new THREE.Vector3(8.5, 5, 13); this.heliT = this.heliOff.clone(); this.heliDmg = 0; this.heliShake = 0; this.heliRoll = 0; this.heliDrop = 0; this.smokeAcc = 0;
+    this.heliMove = null; this.hk = -1;
     this.shake = 0; this.act = null; this.shot = 'frontWide'; this.shotT = 0; this.derYawT = Math.PI; this.bombs = []; this.sfx = null; this.cutGlitch = 0;
     this.buildSky(); this.buildGround(); this.buildTown(A); this.buildSleigh(A); this.buildHeli(A); this.buildParticles();
     this.boom = new Boom(S);
@@ -219,6 +235,8 @@ export class World {
       const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.glow, color: 0xffa050, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false })); glow.scale.setScalar(1.3); g.add(glow); this.rig.add(g); this.flames.push(g); }
     this.jetL = new THREE.PointLight(0xff8a3a, 8, 14, 1.2); this.jetL.position.set(0, .8, 2.4); this.rig.add(this.jetL);
     const fill = new THREE.PointLight(0xffd9b0, 1.8, 9, 1.2); fill.position.set(1.5, 2.6, -2.2); this.rig.add(fill);
+    // lights Der's face when he turns round for the memes shot
+    this.backFill = new THREE.PointLight(0xdfe6ff, 0, 8, 1.2); this.backFill.position.set(.9, 2.5, 2.6); this.rig.add(this.backFill);
     this.muzzle = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.burst, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false })); this.muzzle.scale.setScalar(.7); this.muzzle.visible = false; this.scene.add(this.muzzle);
     this.muzzleL = new THREE.PointLight(0xffd080, 0, 8, 1.4); this.scene.add(this.muzzleL);
   }
@@ -285,27 +303,37 @@ export class World {
     this.camTo = name; this.camK = 0; this.camDur = dur; this.station = name === 'land' ? 'home' : name;
     if (this.station === 'home') this.later(dur, () => { if (this.station === 'home' && !this.act) { this.startAction(); } }); else this.stopAction();
     this.altT = name === 'memes' ? ALT + 135 : ALT;
-    if (name === 'memes') { this.boostT = 1; this.boostHold = 2.6; } else this.boostT = 0;
+    if (name === 'memes') { this.boostT = 1; this.boostHold = 2.6; } else { this.boostT = 0; this.boostHold = 0; }
+    // memes: Der turns round to face the camera behind the sleigh
+    this.derYawT = name === 'memes' ? 0 : Math.PI;
   }
   land() {
-    this.station = 'home'; this.camK = 1; this.altT = ALT; this.boostT = 0; this.startAction(); this.cut('frontWide');
+    this.station = 'home'; this.camK = 1; this.altT = ALT; this.boostT = 0; this.derYawT = Math.PI; this.startAction(); this.cut('danceFront');
   }
   later(t, f) { this.events.push({ t: this.t + t, f }); }
   startAction() { this.act = { t: 0, i: 0 }; }
-  stopAction() { this.act = null; this.heliT.set(8.5, 5, 13); }
+  stopAction() { this.act = null; this.heliMove = null; this.heliT.set(8.5, 5, 13); }
   cut(name) { this.shot = name; this.shotT = 0; this.cutGlitch = .12; }
   runScript(dt) {
     const A = this.act; if (!A) return; A.t += dt;
     while (A.i < SCRIPT.length && SCRIPT[A.i][0] <= A.t) {
-      const [, k, a, b] = SCRIPT[A.i++];
+      const [, k, a, b, c] = SCRIPT[A.i++];
       if (k === 'cut') this.cut(a);
-      else if (k === 'heli') this.heliT.set(...a);
+      else if (k === 'heli') { this.heliMove = null; this.heliT.set(...a); }
+      else if (k === 'heliAt') { this.heliMove = null; this.heliOff.set(...a); this.heliT.set(...a); }
+      else if (k === 'heliFly') { this.heliMove = { from: this.heliOff.clone(), to: new THREE.Vector3(...a), t: 0, dur: b, ease: c }; this.heliT.set(...a); }
+      else if (k === 'siren') this.sfx && this.sfx.sirenIn(a);
+      else if (k === 'der') this.derAnim(a);
       else if (k === 'cop') { this.cop.play(a, { fade: .25, once: true }); this.later(2.2, () => { if (this.cop.name === a) this.cop.play('idle', { fade: .4 }); }); }
       else if (k === 'throw') this.throwBomb(a, b);
       else if (k === 'shootback') this.shootHeli();
       else if (k === 'dershoot') this.shoot(() => this.sfx && this.sfx.shot(), () => this.sfx && this.sfx.ching());
       else if (k === 'loop') { A.t = 0; A.i = 0; }
     }
+  }
+  derAnim(name) {
+    const d = this.der; if (!d || this.busy || d.name === name) return;
+    d.play(name, { fade: .5 });
   }
   throwBomb(target, react) {
     const cop = this.cop; cop.play('throw', { from: 1.8, speed: 1.2, once: true, fade: .2 });
@@ -356,11 +384,12 @@ export class World {
   }
   shoot(onShot, onDone) {
     if (this.busy || !this.der) return false; this.busy = true;
-    const d = this.der, back = d.name === 'dance' ? 'dance' : 'idle';
+    const d = this.der, was = d.name;
     d.play('draw', { from: 1.9, fade: .2 });
     const at = (t, f) => this.events.push({ t: this.t + t, f });
     for (const s of [.85, 1.3, 1.75]) at(s, () => { this.fire(); onShot && onShot(); });
-    at(2.45, () => { d.play(back, { fade: .45 }); });
+    // back to whatever fits the section he is in now
+    at(2.45, () => { d.play(this.station === 'memes' ? (d.clips.groove ? 'groove' : 'dance') : was === 'dance' ? 'dance' : 'idle', { fade: .45 }); });
     at(2.9, () => { this.busy = false; onDone && onDone(); });
     return true;
   }
@@ -378,7 +407,7 @@ export class World {
     const t = this.t += dt;
     for (let i = this.events.length - 1; i >= 0; i--) if (this.events[i].t <= t) { const e = this.events[i]; this.events.splice(i, 1); e.f(); }
     // boost / altitude
-    if (this.boostHold > 0) { this.boostHold -= dt; if (this.boostHold <= 0) this.boostT = .35; }
+    if (this.boostHold > 0) { this.boostHold -= dt; if (this.boostHold <= 0) this.boostT = .15; }
     this.boost = damp(this.boost, this.boostT, 3, dt);
     this.alt = damp(this.alt, this.altT, this.altT > this.alt ? .9 : 1.2, dt);
     this.high = clamp((this.alt - ALT) / 135, 0, 1);
@@ -397,11 +426,16 @@ export class World {
     this.scene.fog.density = lerp(.0052, .0016, this.high);
     // jets
     for (const f of this.flames) { const k = 1 + Math.sin(t * 40 + f.position.x) * .12 + rand(-.08, .08); f.scale.set(.7 + this.boost * .6, .7 + this.boost * .6, k * (.6 + this.boost * 2.6)); }
-    this.jetL.intensity = 7 + this.boost * 22 + rand(-1, 1);
+    this.jetL.intensity = (7 + this.boost * 22 + rand(-1, 1)) * (1 - .72 * (this.memesK || 0));
     // chopper: rides close on the sleigh's tail, door side facing it
     const home = this.station === 'home' && this.act;
-    if (!home) this.heliT.set(8.5, 5, 13);
-    this.heliOff.x = damp(this.heliOff.x, this.heliT.x, 1.1, dt); this.heliOff.y = damp(this.heliOff.y, this.heliT.y, 1.1, dt); this.heliOff.z = damp(this.heliOff.z, this.heliT.z, .9, dt);
+    if (!home) { this.heliMove = null; this.heliT.set(...(this.station === 'memes' ? [9, -24, 46] : [8.5, 5, 13])); }
+    const hm = this.heliMove;
+    if (hm) {
+      hm.t += dt; const u = clamp(hm.t / hm.dur, 0, 1), k = hm.ease === 'in' ? u * u * u : hm.ease === 'io' ? u * u * (3 - 2 * u) : 1 - Math.pow(1 - u, 3);
+      this.heliOff.lerpVectors(hm.from, hm.to, k); if (u >= 1) this.heliMove = null;
+    } else { this.heliOff.x = damp(this.heliOff.x, this.heliT.x, 1.1, dt); this.heliOff.y = damp(this.heliOff.y, this.heliT.y, 1.1, dt); this.heliOff.z = damp(this.heliOff.z, this.heliT.z, .9, dt); }
+    this.memesK = damp(this.memesK || 0, this.station === 'memes' ? 1 : 0, 2, dt); this.backFill.intensity = this.memesK * 2.4;
     this.heliRoll = damp(this.heliRoll, 0, 1.2, dt); this.heliDrop = damp(this.heliDrop, 0, .8, dt); this.heliShake = Math.max(0, this.heliShake - dt);
     this.heliDmg = Math.max(0, this.heliDmg - dt * .045);
     const h = this.heli, rp = this.rig.position;
@@ -413,6 +447,10 @@ export class World {
     _w.copy(rp).add(_u.set(0, 1, 0)); const len = _v.distanceTo(_w) * 1.15;
     this.beam.position.copy(_v); this.beam.quaternion.setFromUnitVectors(_u.set(0, -1, 0), _w.clone().sub(_v).normalize()); this.beam.scale.set(1, len, 1);
     this.spot.position.copy(_v); this.spot.target.position.copy(_w);
+    const lost = this.station === 'memes'; this.beam.visible = !lost; this.spot.intensity = lost ? 0 : 110;
+    // rotor gets louder as the chopper closes in
+    const hk = clamp(1 - (h.position.distanceTo(rp) - 9) / 75, 0, 1);
+    if (this.sfx && Math.abs(hk - this.hk) > .04) { this.hk = hk; this.sfx.heliNear(hk); }
     if (this.heliDmg > .2) { this.smokeAcc += dt; if (this.smokeAcc > .05) { this.smokeAcc = 0; this.engine.getWorldPosition(_u); this.boom.puffSmoke(_u, _w.set(rand(-.5, .5), 1.6, -this.speed * .35), 2.2 + this.heliDmg * 2.6, 2.2, .06, .85); if (this.heliDmg > .55) this.boom.puffFire(_u, _w.set(0, .8, 0), 1.3, .3); } }
     this.cop.update(dt);
     if (home) this.runScript(dt);
@@ -467,7 +505,7 @@ export class World {
     } else {
       if (this.camK < 1) {
         this.camK = Math.min(1, this.camK + dt / this.camDur); const k = ease(this.camK), f = this.camFrom, to = KEYS[this.camTo];
-        c.p.lerpVectors(f.p, _v.set(...to.p), k); c.l.lerpVectors(f.l, _w.set(...to.l), k); c.fov = lerp(f.fov, to.fov, k); c.off = lerp(f.off, to.off, k); c.offY = lerp(f.offY, to.offY, k);
+        orbit(c.p, f.p, _v.set(...to.p), k); c.l.lerpVectors(f.l, _w.set(...to.l), k); c.fov = lerp(f.fov, to.fov, k); c.off = lerp(f.off, to.off, k); c.offY = lerp(f.offY, to.offY, k);
       }
       P.set(rp.x + c.p.x * px + Math.sin(t * .7) * .12, rp.y + c.p.y + Math.sin(t * 1.1) * .08, rp.z + c.p.z * (px < 1 ? 1.15 : 1)); L.set(rp.x + c.l.x, rp.y + c.l.y, rp.z + c.l.z);
     }

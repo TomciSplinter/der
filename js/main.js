@@ -225,8 +225,8 @@ function setStation(i, force) {
   if (!force) { ui.classList.add('nav-used'); sound.whoosh(); world.setStation(STATIONS[i]); }
   about.classList.remove('on'); about.setAttribute('aria-hidden', 'true'); gal.classList.remove('on'); gal.setAttribute('aria-hidden', 'true'); clearTimeout(cardT); clearTimeout(autoShot);
   if (i === 1) { cardT = setTimeout(() => { about.classList.add('on'); about.setAttribute('aria-hidden', 'false'); }, 900); autoShot = setTimeout(doShoot, 1900); }
-  if (i === 2) { der.play('dance', { fade: .6 }); cardT = setTimeout(() => { gal.classList.add('on'); gal.setAttribute('aria-hidden', 'false'); }, 1900); sound.setBoost(1); setTimeout(() => sound.setBoost(.3), 2600); }
-  else { sound.setBoost(0); if (prev === 2 && der.name === 'dance') der.play('idle', { fade: .6 }); }
+  if (i === 2) { der.play(der.clips.groove ? 'groove' : 'dance', { fade: .6 }); cardT = setTimeout(() => { gal.classList.add('on'); gal.setAttribute('aria-hidden', 'false'); }, 1900); sound.setBoost(1); setTimeout(() => sound.setBoost(.15), 2600); }
+  else { sound.setBoost(0); if (prev === 2 && (der.name === 'dance' || der.name === 'groove')) der.play('idle', { fade: .6 }); }
 }
 navBtns.forEach((b, k) => b.onclick = () => { sound.blip(); setStation(k); });
 function doShoot() { world.shoot(() => { sound.shot(); }, () => sound.ching()); }

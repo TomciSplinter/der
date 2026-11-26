@@ -49,7 +49,7 @@ export class Der {
     sc.traverse(o => { if (o.isMesh) { o.frustumCulled = false; o.material.emissive = new THREE.Color(0x140808); } if (o.isBone) { if (o.name === 'Hips') this.hips = o; if (o.name === 'RightHand') this.hand = o; if (o.name === 'Spine02') this.spine = o; if (o.name === 'Head') this.head = o; } });
     this.armature = sc.getObjectByName('Armature') || sc.children[0];
     this.clips = {}; for (const c of gltf.animations) this.clips[c.name] = c;
-    (opts.inPlace || ['idle', 'draw', 'fall', 'dance', 'react', 'dodge']).forEach(n => this.clips[n] && inPlace(this.clips[n]));
+    (opts.inPlace || ['idle', 'draw', 'fall', 'dance', 'react', 'dodge', 'groove']).forEach(n => this.clips[n] && inPlace(this.clips[n]));
     if (this.clips.sit) this.clips.sitUp = THREE.AnimationUtils.subclip(this.clips.sit, 'sitUp', 0, 40, 30);
     this.mixer = new THREE.AnimationMixer(sc);
     this.cur = null; this.name = '';
