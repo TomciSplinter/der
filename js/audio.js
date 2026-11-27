@@ -13,10 +13,8 @@ export class Sound {
     this.sfx = this.bus(.9); this.amb = this.bus(1);
     // music skips the effects compressor so the (already limited) song plays at full loudness
     this.musOut = c.createGain(); this.musOut.gain.value = this.muted ? 0 : 1; this.musOut.connect(c.destination);
-    // +6 dB drive into a hard limiter: louder song without clipping
-    const lim = c.createDynamicsCompressor(); lim.threshold.value = -2; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = .002; lim.release.value = .12;
-    this.musDrive = c.createGain(); this.musDrive.gain.value = 2; this.musDrive.connect(lim); lim.connect(this.musOut);
-    this.mus = c.createGain(); this.mus.gain.value = 0; this.mus.connect(this.musDrive);
+    // the song file is already mastered loud: play it as-is (an extra limiter here made it pump and distort on real speakers)
+    this.mus = c.createGain(); this.mus.gain.value = 0; this.mus.connect(this.musOut);
     const len = c.sampleRate * 2, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.nb = b; return true;
