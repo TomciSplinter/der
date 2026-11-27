@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { psx, lambertize, TEX, rand, clamp, lerp, damp, ease } from './fx.js';
 import { Boom } from './boom.js';
 import { Der } from './der.js';
+import { Terrain, cloudTexture } from './terrain.js';
 
 export const ALT = 32;
 const TL = 30, NT = 14, Z_NEAR = 70;
@@ -128,18 +129,35 @@ export class World {
     const dome = new THREE.Mesh(new THREE.SphereGeometry(1800, 24, 12), new THREE.ShaderMaterial({ side: THREE.BackSide, depthWrite: false, fog: false, uniforms: this.skyU,
       vertexShader: 'varying vec3 vD; void main(){ vD = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); gl_Position.z = gl_Position.w * .9999; }',
       fragmentShader: `varying vec3 vD; uniform vec3 uMoon; uniform float uHigh;
+        float h3(vec3 p){ p = fract(p * .3183099 + .1); p *= 17.; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
+        float n3(vec3 x){ vec3 i = floor(x), f = fract(x); f = f * f * (3. - 2. * f);
+          return mix(mix(mix(h3(i), h3(i + vec3(1,0,0)), f.x), mix(h3(i + vec3(0,1,0)), h3(i + vec3(1,1,0)), f.x), f.y),
+                     mix(mix(h3(i + vec3(0,0,1)), h3(i + vec3(1,0,1)), f.x), mix(h3(i + vec3(0,1,1)), h3(i + vec3(1,1,1)), f.x), f.y), f.z); }
+        float fbm(vec3 p){ float s = 0., a = .5; for (int i = 0; i < 5; i++) { s += a * n3(p); p *= 2.03; a *= .5; } return s; }
         void main(){ float y = vD.y; vec3 hor = mix(vec3(.034,.052,.11), vec3(.05,.03,.12), uHigh * .5), mid = vec3(.011,.018,.048), zen = vec3(.002,.004,.012);
           vec3 c = mix(hor, mid, smoothstep(-.06, .28, y)); c = mix(c, zen, smoothstep(.28, .95, y));
+          // milky way: a soft band of light with dark dust lanes, arching over the valley
+          float b = dot(vD, normalize(vec3(.55, .35, .76))), band = exp(-b * b / .03), core = exp(-b * b / .004);
+          float cl = fbm(vD * 6.), dust = smoothstep(.48, .68, fbm(vD * 11. + 3.)) * core;
+          c += vec3(.03, .034, .055) * band * (.35 + cl) * (1. - .8 * dust) * smoothstep(.0, .3, y);
           float m = max(dot(vD, uMoon), 0.); c += vec3(.25, .28, .4) * (pow(m, 60.) * .5 + pow(m, 7.) * .06);
           gl_FragColor = vec4(c, 1.); }` }));
     dome.renderOrder = -10; this.sky.add(dome);
-    const n = 1400, sp = new Float32Array(n * 3), ph = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const a = rand(0, 6.283), y = rand(.04, 1); const r = Math.sqrt(1 - y * y); sp.set([Math.cos(a) * r * 1700, y * 1700, Math.sin(a) * r * 1700], i * 3); ph[i] = rand(0, 100); }
+    const n = 3400, sp = new Float32Array(n * 3), ph = new Float32Array(n), mw = new THREE.Vector3(.55, .35, .76).normalize();
+    const e1 = new THREE.Vector3().crossVectors(mw, UP).normalize(), e2 = new THREE.Vector3().crossVectors(mw, e1), d = new THREE.Vector3();
+    for (let i = 0; i < n; i++) {
+      if (i < 1300) { const a = rand(0, 6.283), off = (Math.random() + Math.random() + Math.random() - 1.5) * .22; d.copy(e1).multiplyScalar(Math.cos(a)).addScaledVector(e2, Math.sin(a)).addScaledVector(mw, off).normalize(); if (d.y < .03) { i--; continue; } }
+      else { const a = rand(0, 6.283), y = rand(.03, 1), r = Math.sqrt(1 - y * y); d.set(Math.cos(a) * r, y, Math.sin(a) * r); }
+      sp.set([d.x * 1700, d.y * 1700, d.z * 1700], i * 3); ph[i] = rand(0, 100);
+    }
     const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3)); sg.setAttribute('ph', new THREE.BufferAttribute(ph, 1));
     this.starU = { uTime: { value: 0 }, uSize: { value: 2 } };
     const stars = new THREE.Points(sg, new THREE.ShaderMaterial({ uniforms: this.starU, transparent: true, depthWrite: false, fog: false, blending: THREE.AdditiveBlending,
-      vertexShader: 'attribute float ph; uniform float uTime, uSize; varying float vA; void main(){ vA = .55 + .45 * sin(uTime * (1.5 + fract(ph) * 3.) + ph); gl_PointSize = uSize * (ph > 96. ? 2. : 1.); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); gl_Position.z = gl_Position.w * .9998; }',
-      fragmentShader: 'varying float vA; void main(){ gl_FragColor = vec4(vec3(.9, .95, 1.) * vA, 1.); }' }));
+      vertexShader: `attribute float ph; uniform float uTime, uSize; varying float vA; varying vec3 vC;
+        void main(){ float lum = .3 + .7 * pow(fract(ph * 7.7), 2.); vA = lum * (.6 + .4 * sin(uTime * (1.5 + fract(ph) * 3.) + ph));
+          float tc = fract(ph * 13.1); vC = tc > .85 ? vec3(1., .82, .62) : tc < .15 ? vec3(.7, .82, 1.) : vec3(.92, .95, 1.);
+          gl_PointSize = uSize * (ph > 97. ? 1.5 : ph > 88. ? 1. : .5); gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.); gl_Position.z = gl_Position.w * .9998; }`,
+      fragmentShader: 'varying float vA; varying vec3 vC; void main(){ gl_FragColor = vec4(vC * vA, 1.); }' }));
     stars.renderOrder = -9; this.sky.add(stars);
     const moon = new THREE.Sprite(new THREE.SpriteMaterial({ map: TEX.moon, fog: false, depthWrite: false, transparent: true })); moon.position.copy(this.moonDir).multiplyScalar(1500); moon.scale.setScalar(260); moon.renderOrder = -8; this.sky.add(moon);
     // aurora
@@ -154,22 +172,37 @@ export class World {
           vec3 c = mix(vec3(.1, 1., .45), vec3(.65, .25, 1.), smoothstep(.45, 1., vUv.y));
           gl_FragColor = vec4(c * a * uVis * .5, 1.); }` }));
     au.position.set(0, 420, -1150); au.renderOrder = -7; this.sky.add(au);
-    // mountains ring (static, far)
-    const mg = [];
-    for (let i = 0; i < 46; i++) { const a = i / 46 * 6.283 + rand(-.05, .05), d = rand(900, 1200), h = rand(140, 340), r = rand(160, 300);
-      const g = new THREE.ConeGeometry(r, h, 6, 1).toNonIndexed(); g.translate(Math.cos(a) * d, h / 2 - 20, Math.sin(a) * d - 300);
-      const n2 = g.attributes.position.count, c = new Float32Array(n2 * 3); for (let k = 0; k < n2; k++) { const top = g.attributes.position.getY(k) > h * .6; c.set(top ? [.55, .6, .72] : [.05, .07, .12], k * 3); }
-      g.setAttribute('color', new THREE.BufferAttribute(c, 3)); g.deleteAttribute('uv'); mg.push(g); }
-    this.mountains = new THREE.Mesh(mergeGeometries(mg), new THREE.MeshBasicMaterial({ vertexColors: true })); this.scene.add(this.mountains);
+    // shooting star: a short bright streak every few seconds
+    const lg = new THREE.BufferGeometry(); lg.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3)); lg.setAttribute('color', new THREE.BufferAttribute(new Float32Array(6), 3));
+    this.meteor = new THREE.Line(lg, new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, fog: false }));
+    this.meteor.frustumCulled = false; this.meteor.renderOrder = -6; this.meteor.visible = false; this.sky.add(this.meteor); this.meteorT = 3;
+    // mountains, foothill forests, cabin lights and peak clouds all round the valley
+    this.terrain = new Terrain(this.scene, this.fogC);
+  }
+  updateMeteor(dt) {
+    const M = this.meteor;
+    if (!M.visible) {
+      if ((this.meteorT -= dt) > 0) return;
+      const a = rand(0, 6.283), el = rand(.45, 1.05), d = new THREE.Vector3(Math.cos(a) * Math.cos(el), Math.sin(el), Math.sin(a) * Math.cos(el));
+      const side = new THREE.Vector3().crossVectors(d, UP).normalize();
+      M.userData = { d, v: side.multiplyScalar(rand(.5, .8) * (Math.random() < .5 ? 1 : -1)).addScaledVector(UP, -rand(.15, .35)), life: 0, dur: rand(.5, .85) };
+      M.visible = true; this.meteorT = rand(4, 11);
+    }
+    const u = M.userData; u.life += dt; const k = u.life / u.dur;
+    if (k >= 1) { M.visible = false; return; }
+    const head = _t1.copy(u.d).addScaledVector(u.v, u.life).normalize().multiplyScalar(1600), tail = _t2.copy(u.d).addScaledVector(u.v, Math.max(0, u.life - .16)).normalize().multiplyScalar(1600);
+    const p = M.geometry.attributes.position, c = M.geometry.attributes.color, br = Math.sin(k * Math.PI);
+    p.setXYZ(0, head.x, head.y, head.z); p.setXYZ(1, tail.x, tail.y, tail.z); c.setXYZ(0, br, br, br * 1.1); c.setXYZ(1, 0, 0, 0); p.needsUpdate = c.needsUpdate = true;
   }
 
   /* ---------- ground + roads ---------- */
   buildGround() {
     const S = this.scene;
-    this.snowT = TEX.snow.clone(); this.snowT.repeat.set(1400 / 16, 1400 / 16); this.snowT.needsUpdate = true;
-    const g = new THREE.Mesh(new THREE.PlaneGeometry(1400, 1400), psx(new THREE.MeshLambertMaterial({ map: this.snowT }))); g.rotation.x = -Math.PI / 2; g.position.set(0, 0, -500); S.add(g);
-    this.roadT = TEX.road.clone(); this.roadT.repeat.set(1, 1400 / 16); this.roadT.needsUpdate = true;
-    const r = new THREE.Mesh(new THREE.PlaneGeometry(14, 1400), psx(new THREE.MeshLambertMaterial({ map: this.roadT }))); r.rotation.x = -Math.PI / 2; r.position.set(0, .05, -500); S.add(r);
+    // big enough to run all the way to the mountains
+    this.snowT = TEX.snow.clone(); this.snowT.repeat.set(4000 / 16, 4000 / 16); this.snowT.needsUpdate = true;
+    const g = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), psx(new THREE.MeshLambertMaterial({ map: this.snowT }))); g.rotation.x = -Math.PI / 2; S.add(g);
+    this.roadT = TEX.road.clone(); this.roadT.repeat.set(1, 4000 / 16); this.roadT.needsUpdate = true;
+    const r = new THREE.Mesh(new THREE.PlaneGeometry(14, 4000), psx(new THREE.MeshLambertMaterial({ map: this.roadT }))); r.rotation.x = -Math.PI / 2; r.position.set(0, .05, 0); S.add(r);
   }
 
   /* ---------- instanced town: houses, pines, lamps, cross streets ---------- */
@@ -286,9 +319,11 @@ export class World {
     const n = 1600, sp = new Float32Array(n * 3); for (let i = 0; i < n; i++) sp.set([rand(-60, 60), rand(-35, 35), rand(-90, 25)], i * 3);
     const sg = new THREE.BufferGeometry(); sg.setAttribute('position', new THREE.BufferAttribute(sp, 3));
     this.snow = new THREE.Points(sg, new THREE.PointsMaterial({ size: .22, map: TEX.flake, color: 0xeaf2ff, transparent: true, depthWrite: false, opacity: .95 })); this.snow.frustumCulled = false; S.add(this.snow);
+    // cloud deck: flat, ragged sheets (read as a cloud layer from below and a cloud sea from above)
     this.clouds = [];
-    const cm = new THREE.SpriteMaterial({ map: TEX.puff, color: 0x8796b8, transparent: true, depthWrite: false, opacity: .85 });
-    for (let i = 0; i < 80; i++) { const c = new THREE.Sprite(cm); c.position.set(rand(-260, 260), ALT + rand(70, 96), rand(-520, 80)); c.scale.set(rand(60, 110), rand(30, 50), 1); S.add(c); this.clouds.push(c); }
+    const cm = new THREE.MeshBasicMaterial({ map: cloudTexture(), color: 0x8e9cc0, transparent: true, depthWrite: false, opacity: .8, side: THREE.DoubleSide });
+    const cg = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
+    for (let i = 0; i < 70; i++) { const c = new THREE.Mesh(cg, cm); c.position.set(rand(-300, 300), ALT + rand(72, 98), rand(-520, 80)); c.rotation.y = rand(0, 6.28); c.scale.set(rand(110, 220), 1, rand(70, 150)); c.renderOrder = 1; S.add(c); this.clouds.push(c); }
     // bills
     const NB = this.NB = 240;
     this.bills = new THREE.InstancedMesh(new THREE.PlaneGeometry(.36, .16), psx(new THREE.MeshLambertMaterial({ map: TEX.bill, side: THREE.DoubleSide, emissive: 0x2a3a2a })), NB); this.bills.frustumCulled = false; S.add(this.bills);
@@ -454,6 +489,7 @@ export class World {
     // sky follows camera
     this.sky.position.copy(this.cam.position); this.starU.uTime.value = t; this.auroraU.uTime.value = t; this.auroraU.uVis.value = .35 + this.high * .9; this.skyU.uHigh.value = this.high;
     this.scene.fog.density = lerp(.0052, .0016, this.high);
+    this.terrain.update(dt, t, this.scene.fog.density); this.updateMeteor(dt);
     // jets
     for (const f of this.flames) { const k = 1 + Math.sin(t * 40 + f.position.x) * .12 + rand(-.08, .08); f.scale.set(.7 + this.boost * .6, .7 + this.boost * .6, k * (.6 + this.boost * 2.6)); }
     this.jetL.intensity = 7 + this.boost * 22 + rand(-1, 1);
