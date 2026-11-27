@@ -9,10 +9,12 @@ export class Sound {
     const c = this.ctx = new AC();
     this.master = c.createGain(); this.master.gain.value = this.muted ? 0 : .9;
     const comp = c.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
-    this.master.connect(comp); comp.connect(c.destination);
+    // everything (effects and song) meets in one peak catcher, so the sum never clips on full-range speakers
+    const out = c.createDynamicsCompressor(); out.threshold.value = -1.5; out.knee.value = 0; out.ratio.value = 20; out.attack.value = .003; out.release.value = .25; out.connect(c.destination);
+    this.master.connect(comp); comp.connect(out);
     this.sfx = this.bus(.9); this.amb = this.bus(1);
     // music skips the effects compressor so the (already limited) song plays at full loudness
-    this.musOut = c.createGain(); this.musOut.gain.value = this.muted ? 0 : 1; this.musOut.connect(c.destination);
+    this.musOut = c.createGain(); this.musOut.gain.value = this.muted ? 0 : .85; this.musOut.connect(out);
     // the song file is already mastered loud: play it as-is (an extra limiter here made it pump and distort on real speakers)
     this.mus = c.createGain(); this.mus.gain.value = 0; this.mus.connect(this.musOut);
     const len = c.sampleRate * 2, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
@@ -25,7 +27,7 @@ export class Sound {
   setMuted(m) {
     this.muted = m; try { localStorage.setItem('der-muted', m ? '1' : '0'); } catch (e) { }
     if (this.ctx) this.master.gain.setTargetAtTime(m ? 0 : .9, this.ctx.currentTime, .05);
-    if (this.ctx) this.musOut.gain.setTargetAtTime(m ? 0 : 1, this.ctx.currentTime, .05);
+    if (this.ctx) this.musOut.gain.setTargetAtTime(m ? 0 : .85, this.ctx.currentTime, .05);
   }
   get now() { return this.ctx.currentTime; }
   noise(start = 0) { const s = this.ctx.createBufferSource(); s.buffer = this.nb; s.loop = true; s.loopStart = 0; s.loopEnd = 2; s.start(this.now + start, r(0, 1.9)); return s; }
@@ -60,11 +62,11 @@ export class Sound {
   startDrive() {
     if (!this.ctx || this.loops.drive) return;
     const c = this.ctx, g = this.gain(0); g.connect(this.amb); g.gain.setTargetAtTime(1, this.now, .8);
-    const w = this.noise(); const wl = this.filt('lowpass', 600, .7); const wg = this.gain(.11); w.connect(wl); wl.connect(wg); wg.connect(g);
+    const w = this.noise(); const wl = this.filt('lowpass', 600, .7); const wg = this.gain(.045); w.connect(wl); wl.connect(wg); wg.connect(g);
     const lfo = c.createOscillator(); lfo.frequency.value = .13; const lg = this.gain(260); lfo.connect(lg); lg.connect(wl.frequency); lfo.start();
-    const j = this.noise(); const jl = this.filt('lowpass', 210, .9); this.jetG = this.gain(.13); j.connect(jl); jl.connect(this.jetG); this.jetG.connect(g);
-    const saw = c.createOscillator(); saw.type = 'sawtooth'; saw.frequency.value = 46; const sl = this.filt('lowpass', 140); const sg = this.gain(.05); saw.connect(sl); sl.connect(sg); sg.connect(g); saw.start(); this.jetOsc = saw;
-    const hN = this.noise(); const hb = this.filt('bandpass', 150, 1.2); const hg = this.gain(.05); const am = c.createOscillator(); am.type = 'square'; am.frequency.value = 11.5; const amg = this.gain(.05);
+    const j = this.noise(); const jl = this.filt('lowpass', 210, .9); this.jetG = this.gain(.05); j.connect(jl); jl.connect(this.jetG); this.jetG.connect(g);
+    const saw = c.createOscillator(); saw.type = 'sawtooth'; saw.frequency.value = 46; const sl = this.filt('lowpass', 140); const sg = this.gain(.012); saw.connect(sl); sl.connect(sg); sg.connect(g); saw.start(); this.jetOsc = saw;
+    const hN = this.noise(); const hb = this.filt('bandpass', 150, 1.2); const hg = this.gain(.025); const am = c.createOscillator(); am.type = 'square'; am.frequency.value = 11.5; const amg = this.gain(.025);
     am.connect(amg); amg.connect(hg.gain); hN.connect(hb); hb.connect(hg); hg.connect(g); am.start(); this.rotorG = hg; this.rotorAM = amg;
     const iv = setInterval(() => { if (Math.random() < .08) this.siren(); }, 2500);
     this.loops.drive = { g, nodes: [w, lfo, j, saw, hN, am], iv };
@@ -72,7 +74,7 @@ export class Sound {
   // chopper rotor loudness, k = 0 far … 1 right behind the sleigh
   heliNear(k) {
     if (!this.rotorG) return; const t = this.now;
-    this.rotorG.gain.setTargetAtTime(.03 + k * .09, t, .25); this.rotorAM.gain.setTargetAtTime(.03 + k * .09, t, .25);
+    this.rotorG.gain.setTargetAtTime(.015 + k * .045, t, .25); this.rotorAM.gain.setTargetAtTime(.015 + k * .045, t, .25);
   }
   // police siren coming in from far away: quiet at first, loud on arrival, then fades
   sirenIn(dur = 5) {
@@ -84,7 +86,7 @@ export class Sound {
     g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.06, t + dur); g.gain.setValueAtTime(.06, t + dur + .3); g.gain.linearRampToValueAtTime(0, t + T);
     o.start(t); o2.start(t); o.stop(t + T + .05); o2.stop(t + T + .05);
   }
-  setBoost(b) { if (this.jetG) { this.jetG.gain.setTargetAtTime(.13 + b * .3, this.now, .2); this.jetOsc.frequency.setTargetAtTime(46 + b * 40, this.now, .3); } }
+  setBoost(b) { if (this.jetG) { this.jetG.gain.setTargetAtTime(.05 + b * .12, this.now, .2); this.jetOsc.frequency.setTargetAtTime(46 + b * 40, this.now, .3); } }
   siren() {
     if (!this.ctx) return; const c = this.ctx, t = this.now, o = c.createOscillator(), g = this.gain(0), bp = this.filt('bandpass', 900, 2);
     o.type = 'sine'; const curve = new Float32Array([620, 900, 1240, 900, 620, 900, 1240, 900, 620]); o.frequency.setValueCurveAtTime(curve, t, 2.6);
