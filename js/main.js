@@ -179,7 +179,7 @@ function unlockAudio() {
   else if (state === 'drive') { sound.startDrive(); sound.startMusic(); }
 }
 ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown'].forEach(ev => addEventListener(ev, unlockAudio, { capture: true, passive: true }));
-sound.loadSong('audio/song.mp3?v=4');
+sound.loadSong('audio/song.mp3?v=5');
 tvEnter.onclick = () => { if (state === 'room') startAct(); };
 skipBtn.onclick = () => { if (state === 'tube' || state === 'room') { flash(1, 80); setTimeout(() => startDrive(), 120); } };
 

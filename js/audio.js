@@ -8,20 +8,22 @@ export class Sound {
     const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return false;
     const c = this.ctx = new AC();
     this.master = c.createGain(); this.master.gain.value = this.muted ? 0 : .9;
-    const comp = c.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4;
-    // everything (effects and song) meets in one peak catcher, so the sum never clips on full-range speakers
-    const out = c.createDynamicsCompressor(); out.threshold.value = -1.5; out.knee.value = 0; out.ratio.value = 20; out.attack.value = .003; out.release.value = .25; out.connect(c.destination);
+    // effects get their own gentle compressor; a knee of 10 keeps its automatic make-up gain small
+    const comp = c.createDynamicsCompressor(); comp.threshold.value = -14; comp.ratio.value = 4; comp.knee.value = 10;
+    // last-resort peak catcher on the sum: sits above the song's own peaks, so it only acts when a big effect lands on a loud beat
+    const out = c.createDynamicsCompressor(); out.threshold.value = -2; out.knee.value = 0; out.ratio.value = 20; out.attack.value = .001; out.release.value = .1; out.connect(c.destination);
     this.master.connect(comp); comp.connect(out);
-    this.sfx = this.bus(.9); this.amb = this.bus(1);
-    // music skips the effects compressor so the (already limited) song plays at full loudness
+    // full-range speakers play everything below ~100 Hz that phones can't: keep the deep end for the song.
+    // ambience is high-passed hard (wind and engines are 'air', not rumble); effects lose only the inaudible sub
+    this.sfx = this.bus(.6, 45); this.amb = this.bus(.8, 140);
+    // the song is mastered clean (no pumping, peaks at -1.4 dB) and played untouched, a touch under the peak catcher
     this.musOut = c.createGain(); this.musOut.gain.value = this.muted ? 0 : .85; this.musOut.connect(out);
-    // the song file is already mastered loud: play it as-is (an extra limiter here made it pump and distort on real speakers)
     this.mus = c.createGain(); this.mus.gain.value = 0; this.mus.connect(this.musOut);
     const len = c.sampleRate * 2, b = c.createBuffer(1, len, c.sampleRate), d = b.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
     this.nb = b; return true;
   }
-  bus(v) { const g = this.ctx.createGain(); g.gain.value = v; g.connect(this.master); return g; }
+  bus(v, hp) { const g = this.ctx.createGain(); g.gain.value = v; if (hp) { const f = this.filt('highpass', hp, .7); g.connect(f); f.connect(this.master); } else g.connect(this.master); return g; }
   resume() { if (this.ctx && this.ctx.state !== 'running') this.ctx.resume(); }
   suspend() { if (this.ctx && this.ctx.state === 'running') this.ctx.suspend(); }
   setMuted(m) {
@@ -62,11 +64,11 @@ export class Sound {
   startDrive() {
     if (!this.ctx || this.loops.drive) return;
     const c = this.ctx, g = this.gain(0); g.connect(this.amb); g.gain.setTargetAtTime(1, this.now, .8);
-    const w = this.noise(); const wl = this.filt('lowpass', 600, .7); const wg = this.gain(.045); w.connect(wl); wl.connect(wg); wg.connect(g);
+    const w = this.noise(); const wl = this.filt('lowpass', 900, .7); const wg = this.gain(.09); w.connect(wl); wl.connect(wg); wg.connect(g);
     const lfo = c.createOscillator(); lfo.frequency.value = .13; const lg = this.gain(260); lfo.connect(lg); lg.connect(wl.frequency); lfo.start();
-    const j = this.noise(); const jl = this.filt('lowpass', 210, .9); this.jetG = this.gain(.05); j.connect(jl); jl.connect(this.jetG); this.jetG.connect(g);
-    const saw = c.createOscillator(); saw.type = 'sawtooth'; saw.frequency.value = 46; const sl = this.filt('lowpass', 140); const sg = this.gain(.012); saw.connect(sl); sl.connect(sg); sg.connect(g); saw.start(); this.jetOsc = saw;
-    const hN = this.noise(); const hb = this.filt('bandpass', 150, 1.2); const hg = this.gain(.025); const am = c.createOscillator(); am.type = 'square'; am.frequency.value = 11.5; const amg = this.gain(.025);
+    const j = this.noise(); const jl = this.filt('bandpass', 420, .8); this.jetG = this.gain(.08); j.connect(jl); jl.connect(this.jetG); this.jetG.connect(g);
+    const saw = c.createOscillator(); saw.type = 'sawtooth'; saw.frequency.value = 92; const sl = this.filt('bandpass', 280, 1); const sg = this.gain(.006); saw.connect(sl); sl.connect(sg); sg.connect(g); saw.start(); this.jetOsc = saw;
+    const hN = this.noise(); const hb = this.filt('bandpass', 260, 1.2); const hg = this.gain(.025); const am = c.createOscillator(); am.type = 'square'; am.frequency.value = 11.5; const amg = this.gain(.025);
     am.connect(amg); amg.connect(hg.gain); hN.connect(hb); hb.connect(hg); hg.connect(g); am.start(); this.rotorG = hg; this.rotorAM = amg;
     const iv = setInterval(() => { if (Math.random() < .08) this.siren(); }, 2500);
     this.loops.drive = { g, nodes: [w, lfo, j, saw, hN, am], iv };
@@ -86,7 +88,7 @@ export class Sound {
     g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.06, t + dur); g.gain.setValueAtTime(.06, t + dur + .3); g.gain.linearRampToValueAtTime(0, t + T);
     o.start(t); o2.start(t); o.stop(t + T + .05); o2.stop(t + T + .05);
   }
-  setBoost(b) { if (this.jetG) { this.jetG.gain.setTargetAtTime(.05 + b * .12, this.now, .2); this.jetOsc.frequency.setTargetAtTime(46 + b * 40, this.now, .3); } }
+  setBoost(b) { if (this.jetG) { this.jetG.gain.setTargetAtTime(.08 + b * .16, this.now, .2); this.jetOsc.frequency.setTargetAtTime(92 + b * 60, this.now, .3); } }
   siren() {
     if (!this.ctx) return; const c = this.ctx, t = this.now, o = c.createOscillator(), g = this.gain(0), bp = this.filt('bandpass', 900, 2);
     o.type = 'sine'; const curve = new Float32Array([620, 900, 1240, 900, 620, 900, 1240, 900, 620]); o.frequency.setValueCurveAtTime(curve, t, 2.6);
@@ -105,21 +107,21 @@ export class Sound {
   }
   stopMusic() { this.musOn = false; if (this.ctx) this.mus.gain.setTargetAtTime(0, this.now, .3); const s = this.songSrc; this.songSrc = null; if (s) setTimeout(() => { try { s.stop(); } catch (e) { } }, 1200); }
   /* ---------- effects ---------- */
-  shot() { if (!this.ctx) return; const t = this.now; this.burst(t, .32, .9, 'lowpass', 2600, this.sfx, .7, 400); this.burst(t, .04, .6, 'highpass', 3000, this.sfx); this.tone('sine', 120, t, .22, .7, this.sfx, 38); }
+  shot() { if (!this.ctx) return; const t = this.now; this.burst(t, .32, .9, 'lowpass', 2600, this.sfx, .7, 400); this.burst(t, .04, .6, 'highpass', 3000, this.sfx); this.tone('sine', 170, t, .18, .4, this.sfx, 70); }
   zap(dur = 1.4) {
     if (!this.ctx) return; const t = this.now, s = this.ctx.createBufferSource(); s.buffer = this.nb; s.loop = true; const bp = this.filt('bandpass', 2600, 3); const g = this.gain(0);
     for (let k = 0; k < dur; k += .03) g.gain.setValueAtTime(Math.random() < .55 ? r(.08, .3) : 0, t + k); g.gain.setValueAtTime(0, t + dur);
     s.connect(bp); bp.connect(g); g.connect(this.sfx); s.start(t); s.stop(t + dur + .1); this.tone('sawtooth', 70, t, dur, .05, this.sfx, 140);
   }
   suck() { if (!this.ctx) return; const t = this.now; this.burst(t, 1.6, .45, 'bandpass', 2800, this.sfx, 1.2, 160); this.tone('sine', 700, t, 1.5, .16, this.sfx, 60); }
-  boom() { if (!this.ctx) return; const t = this.now; this.tone('sine', 90, t, 1.1, .8, this.sfx, 28); this.burst(t, 1.2, .45, 'lowpass', 500, this.sfx, .7, 80); this.burst(t, .25, .35, 'highpass', 4000, this.sfx); }
+  boom() { if (!this.ctx) return; const t = this.now; this.tone('sine', 120, t, .8, .28, this.sfx, 60); this.burst(t, 1.2, .35, 'lowpass', 900, this.sfx, .7, 160); this.burst(t, .25, .35, 'highpass', 4000, this.sfx); }
   whoosh() { if (!this.ctx) return; const t = this.now; this.burst(t, .7, .22, 'bandpass', 500, this.sfx, 1.4, 2200); }
   blip() { if (!this.ctx) return; const t = this.now; this.tone('square', 990, t, .04, .05, this.sfx); this.tone('square', 1480, t + .045, .05, .05, this.sfx); }
   ching() { if (!this.ctx) return; const t = this.now; this.burst(t, .05, .25, 'highpass', 5000, this.sfx); this.tone('triangle', 1568, t + .02, .25, .16, this.sfx); this.tone('triangle', 2637, t + .1, .55, .14, this.sfx); }
   clank() { if (!this.ctx) return; const t = this.now; this.tone('square', r(900, 1300), t, .05, .09, this.sfx, 500); this.burst(t, .08, .35, 'bandpass', 3200, this.sfx, 3); this.tone('triangle', 2400, t + .01, .18, .05, this.sfx, 1800); }
   whistle(T = 1) { if (!this.ctx) return; const t = this.now; this.tone('sine', 1900, t, T, .07, this.sfx, 520); this.burst(t, T, .05, 'bandpass', 1400, this.sfx, 6, 500); }
-  explode(k = 1) { if (!this.ctx) return; const t = this.now; this.tone('sine', 70, t, 1.4, .95 * k, this.sfx, 24); this.burst(t, 1.6, .7 * k, 'lowpass', 900, this.sfx, .7, 60); this.burst(t, .35, .5 * k, 'highpass', 2500, this.sfx);
+  explode(k = 1) { if (!this.ctx) return; const t = this.now; this.tone('sine', 110, t, .9, .3 * k, this.sfx, 55); this.burst(t, 1.6, .5 * k, 'lowpass', 1400, this.sfx, .7, 160); this.burst(t, .35, .5 * k, 'highpass', 2500, this.sfx);
     for (let i = 0; i < 10; i++) this.burst(t + .15 + Math.random() * .9, .04, .12 * k, 'highpass', 3000 + Math.random() * 3000, this.sfx); }
   glass() { if (!this.ctx) return; const t = this.now; this.burst(t, .25, .5, 'highpass', 4500, this.sfx); for (let i = 0; i < 9; i++) this.tone('sine', r(3500, 7500), t + Math.random() * .35, .12, .03, this.sfx); this.tone('square', 220, t, .06, .12, this.sfx, 90); }
-  tvOn() { if (!this.ctx) return; const t = this.now; this.tone('sine', 60, t, .25, .4, this.sfx, 40); this.burst(t, .5, .2, 'highpass', 3000, this.sfx); this.tone('sine', 15000, t + .05, .4, .01, this.sfx); }
+  tvOn() { if (!this.ctx) return; const t = this.now; this.tone('sine', 120, t, .25, .3, this.sfx, 70); this.burst(t, .5, .2, 'highpass', 3000, this.sfx); this.tone('sine', 15000, t + .05, .4, .01, this.sfx); }
 }
