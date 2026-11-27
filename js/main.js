@@ -11,7 +11,7 @@ import { drawCrack } from './boom.js';
 /* ======== edit these when the links are live ======== */
 const CONFIG = {
   ca: '',        // contract address, e.g. '0x1234…'
-  x: '',         // e.g. 'https://x.com/yourhandle'
+  x: 'https://x.com/derdotfun',
   telegram: '',  // e.g. 'https://t.me/yourgroup'
   chart: '',     // e.g. 'https://dexscreener.com/…'
 };
